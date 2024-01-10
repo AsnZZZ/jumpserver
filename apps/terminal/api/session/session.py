@@ -16,12 +16,14 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from audits.const import ActionChoices
+from audits.const import ActionChoices, ActivityChoices
+from audits.models import ActivityLog
 from common.api import AsyncApiMixin
-from common.const.http import GET
+from common.const.http import GET, POST
 from common.drf.filters import BaseFilterSet
 from common.drf.filters import DatetimeRangeFilterBackend
 from common.drf.renders import PassthroughRenderer
+from common.permissions import IsServiceAccount
 from common.storage.replay import ReplayStorageHandler
 from common.utils import data_to_json, is_uuid, i18n_fmt
 from common.utils import get_logger, get_object_or_none
@@ -167,6 +169,37 @@ class SessionViewSet(RecordViewLogMixin, OrgBulkModelViewSet):
             queryset = queryset.filter(account__endswith='({})'.format(account))
         count = queryset.count()
         return Response({'count': count})
+
+    @action(methods=[POST], detail=True, permission_classes=[IsServiceAccount], url_path='record-session-log',
+            url_name='record-session-log')
+    def record_session_log(self, request, *args, **kwargs):
+        # 记录会话活动日志，包含以下类型
+        # 连接成功, 连接失败原因
+        # 录像上传开始, 录像上传结束, 录像上传失败原因
+
+        msg_types = {
+            'connect_success': gettext_noop('Asset connection: success'),
+            'connect_failed': gettext_noop('Asset connection: failed %s'),
+            'replay_upload_start': gettext_noop('Replay upload: start'),
+            'replay_upload_failed': gettext_noop('Replay upload: failed %s'),
+            'replay_upload_end': gettext_noop('Replay upload: end'),
+        }
+        msg_type = request.data.get('type')
+        error = request.data.get('error')
+        if msg_type not in msg_types:
+            return Response({'error': 'not support type: {}'.format(msg_type)}, status=400)
+        msg = msg_types.get(msg_type)
+        if error:
+            detail = i18n_fmt(msg, error)
+        else:
+            detail = msg
+        session = self.get_object()
+        obj = ActivityLog.objects.create(
+            resource_id=session.id,
+            type=ActivityChoices.session_log,
+            detail=detail, org_id=session.org_id
+        )
+        return Response({'msg': 'ok', 'id': obj.id})
 
     def get_queryset(self):
         queryset = super().get_queryset() \
