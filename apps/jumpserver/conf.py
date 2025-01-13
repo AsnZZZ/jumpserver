@@ -28,6 +28,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 XPACK_DIR = os.path.join(BASE_DIR, 'xpack')
 HAS_XPACK = os.path.isdir(XPACK_DIR)
+DEFAULT_ID = '00000000-0000-0000-0000-000000000002'
 
 logger = logging.getLogger('jumpserver.conf')
 
@@ -234,6 +235,7 @@ class Config(dict):
         'SESSION_COOKIE_NAME_PREFIX': None,
         'SESSION_COOKIE_AGE': 3600 * 24,
         'SESSION_EXPIRE_AT_BROWSER_CLOSE': False,
+        'VIEW_ASSET_ONLINE_SESSION_INFO': True,
         'LOGIN_URL': reverse_lazy('authentication:login'),
 
         'CONNECTION_TOKEN_ONETIME_EXPIRATION': 5 * 60,  # 默认(new)
@@ -257,9 +259,20 @@ class Config(dict):
 
         # Vault
         'VAULT_ENABLED': False,
+        'VAULT_BACKEND': 'local',
+
         'VAULT_HCP_HOST': '',
         'VAULT_HCP_TOKEN': '',
         'VAULT_HCP_MOUNT_POINT': 'jumpserver',
+
+        'VAULT_AZURE_HOST': '',
+        'VAULT_AZURE_CLIENT_ID': '',
+        'VAULT_AZURE_CLIENT_SECRET': '',
+        'VAULT_AZURE_TENANT_ID': '',
+
+        'VAULT_AWS_REGION_NAME': '',
+        'VAULT_AWS_ACCESS_KEY_ID': '',
+        'VAULT_AWS_ACCESS_SECRET_KEY': '',
 
         'HISTORY_ACCOUNT_CLEAN_LIMIT': 999,
 
@@ -277,15 +290,35 @@ class Config(dict):
         'AUTH_LDAP_START_TLS': False,
         'AUTH_LDAP_USER_ATTR_MAP': {"username": "cn", "name": "sn", "email": "mail"},
         'AUTH_LDAP_CONNECT_TIMEOUT': 10,
-        'AUTH_LDAP_CACHE_TIMEOUT': 3600 * 24 * 30,
+        'AUTH_LDAP_CACHE_TIMEOUT': 0,
         'AUTH_LDAP_SEARCH_PAGED_SIZE': 1000,
         'AUTH_LDAP_SYNC_IS_PERIODIC': False,
         'AUTH_LDAP_SYNC_INTERVAL': None,
         'AUTH_LDAP_SYNC_CRONTAB': None,
-        'AUTH_LDAP_SYNC_ORG_IDS': ['00000000-0000-0000-0000-000000000002'],
+        'AUTH_LDAP_SYNC_ORG_IDS': [DEFAULT_ID],
         'AUTH_LDAP_SYNC_RECEIVERS': [],
         'AUTH_LDAP_USER_LOGIN_ONLY_IN_USERS': False,
         'AUTH_LDAP_OPTIONS_OPT_REFERRALS': -1,
+
+        # Auth LDAP HA settings
+        'AUTH_LDAP_HA': False,
+        'AUTH_LDAP_HA_SERVER_URI': 'ldap://localhost:389',
+        'AUTH_LDAP_HA_BIND_DN': 'cn=admin,dc=jumpserver,dc=org',
+        'AUTH_LDAP_HA_BIND_PASSWORD': '',
+        'AUTH_LDAP_HA_SEARCH_OU': 'ou=tech,dc=jumpserver,dc=org',
+        'AUTH_LDAP_HA_SEARCH_FILTER': '(cn=%(user)s)',
+        'AUTH_LDAP_HA_START_TLS': False,
+        'AUTH_LDAP_HA_USER_ATTR_MAP': {"username": "cn", "name": "sn", "email": "mail"},
+        'AUTH_LDAP_HA_CONNECT_TIMEOUT': 10,
+        'AUTH_LDAP_HA_CACHE_TIMEOUT': 0,
+        'AUTH_LDAP_HA_SEARCH_PAGED_SIZE': 1000,
+        'AUTH_LDAP_HA_SYNC_IS_PERIODIC': False,
+        'AUTH_LDAP_HA_SYNC_INTERVAL': None,
+        'AUTH_LDAP_HA_SYNC_CRONTAB': None,
+        'AUTH_LDAP_HA_SYNC_ORG_IDS': [DEFAULT_ID],
+        'AUTH_LDAP_HA_SYNC_RECEIVERS': [],
+        'AUTH_LDAP_HA_USER_LOGIN_ONLY_IN_USERS': False,
+        'AUTH_LDAP_HA_OPTIONS_OPT_REFERRALS': -1,
 
         # OpenID 配置参数
         # OpenID 公有配置参数 (version <= 1.5.8 或 version >= 1.5.8)
@@ -323,6 +356,7 @@ class Config(dict):
         'AUTH_OPENID_KEYCLOAK': True,
         'AUTH_OPENID_SERVER_URL': 'https://keycloak.example.com',
         'AUTH_OPENID_REALM_NAME': None,
+        'OPENID_ORG_IDS': [DEFAULT_ID],
 
         # Raidus 认证
         'AUTH_RADIUS': False,
@@ -332,6 +366,7 @@ class Config(dict):
         'RADIUS_ATTRIBUTES': {},
         'RADIUS_ENCRYPT_PASSWORD': True,
         'OTP_IN_RADIUS': False,
+        'RADIUS_ORG_IDS': [DEFAULT_ID],
 
         # Cas 认证
         'AUTH_CAS': False,
@@ -343,6 +378,7 @@ class Config(dict):
         'CAS_APPLY_ATTRIBUTES_TO_USER': False,
         'CAS_RENAME_ATTRIBUTES': {'cas:user': 'username'},
         'CAS_CREATE_USER': True,
+        'CAS_ORG_IDS': [DEFAULT_ID],
 
         'AUTH_SSO': False,
         'AUTH_SSO_AUTHKEY_TTL': 60 * 15,
@@ -370,6 +406,7 @@ class Config(dict):
         'SAML2_SP_CERT_CONTENT': '',
         'AUTH_SAML2_PROVIDER_AUTHORIZATION_ENDPOINT': '/',
         'AUTH_SAML2_AUTHENTICATION_FAILURE_REDIRECT_URI': '/',
+        'SAML2_ORG_IDS': [DEFAULT_ID],
 
         # OAuth2 认证
         'AUTH_OAUTH2': False,
@@ -388,6 +425,8 @@ class Config(dict):
         'AUTH_OAUTH2_USER_ATTR_MAP': {
             'name': 'name', 'username': 'username', 'email': 'email'
         },
+        'OAUTH2_ORG_IDS': [DEFAULT_ID],
+
         'AUTH_PASSKEY': False,
         'FIDO_SERVER_ID': '',
         'FIDO_SERVER_NAME': 'JumpServer',
@@ -397,12 +436,24 @@ class Config(dict):
         'WECOM_CORPID': '',
         'WECOM_AGENTID': '',
         'WECOM_SECRET': '',
+        'WECOM_RENAME_ATTRIBUTES': {
+            'name': 'name',
+            'username': 'userid',
+            'email': 'email'
+        },
+        'WECOM_ORG_IDS': [DEFAULT_ID],
 
         # 钉钉
         'AUTH_DINGTALK': False,
         'DINGTALK_AGENTID': '',
         'DINGTALK_APPKEY': '',
         'DINGTALK_APPSECRET': '',
+        'DINGTALK_RENAME_ATTRIBUTES': {
+            'name': 'name',
+            'username': 'user_id',
+            'email': 'email'
+        },
+        'DINGTALK_ORG_IDS': [DEFAULT_ID],
 
         # 飞书
         'AUTH_FEISHU': False,
@@ -413,6 +464,7 @@ class Config(dict):
             'username': 'user_id',
             'email': 'enterprise_email'
         },
+        'FEISHU_ORG_IDS': [DEFAULT_ID],
 
         # Lark
         'AUTH_LARK': False,
@@ -423,15 +475,27 @@ class Config(dict):
             'username': 'user_id',
             'email': 'enterprise_email'
         },
+        'LARK_ORG_IDS': [DEFAULT_ID],
 
         # Slack
         'AUTH_SLACK': False,
         'SLACK_CLIENT_ID': '',
         'SLACK_CLIENT_SECRET': '',
         'SLACK_BOT_TOKEN': '',
+        'SLACK_RENAME_ATTRIBUTES': {
+            'name': 'real_name',
+            'username': 'name',
+            'email': 'profile.email'
+        },
+        'SLACK_ORG_IDS': [DEFAULT_ID],
 
         'LOGIN_REDIRECT_TO_BACKEND': '',  # 'OPENID / CAS / SAML2
         'LOGIN_REDIRECT_MSG_ENABLED': True,
+
+        # 人脸识别
+        'FACE_RECOGNITION_ENABLED': False,
+        'FACE_RECOGNITION_DISTANCE_THRESHOLD': 0.35,
+        'FACE_RECOGNITION_COSINE_THRESHOLD': 0.95,
 
         'SMS_ENABLED': False,
         'SMS_BACKEND': '',
@@ -482,6 +546,7 @@ class Config(dict):
         # Terminal配置
         'TERMINAL_PASSWORD_AUTH': True,
         'TERMINAL_PUBLIC_KEY_AUTH': True,
+        'TERMINAL_SSH_KEY_LIMIT_COUNT': 10,
         'TERMINAL_HEARTBEAT_INTERVAL': 20,
         'TERMINAL_ASSET_LIST_SORT_BY': 'name',
         'TERMINAL_ASSET_LIST_PAGE_SIZE': 'auto',
@@ -579,6 +644,7 @@ class Config(dict):
         'CLOUD_SYNC_TASK_EXECUTION_KEEP_DAYS': 180,
         'JOB_EXECUTION_KEEP_DAYS': 180,
         'PASSWORD_CHANGE_LOG_KEEP_DAYS': 999,
+        'ACCOUNT_CHANGE_SECRET_RECORD_KEEP_DAYS': 180,
 
         'TICKETS_ENABLED': True,
         'TICKETS_DIRECT_APPROVE': False,
@@ -610,7 +676,6 @@ class Config(dict):
 
         # API 分页
         'MAX_LIMIT_PER_PAGE': 10000,
-        'DEFAULT_PAGE_SIZE': None,
 
         'LIMIT_SUPER_PRIV': False,
 

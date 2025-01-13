@@ -190,7 +190,8 @@ class ES(object):
                 mappings['aliases'] = {
                     self.query_index: {}
                 }
-
+            if self.es.indices.exists(index=self.index):
+                return
             try:
                 self.es.indices.create(index=self.index, body=mappings)
             except (RequestError, BadRequestError) as e:
@@ -408,8 +409,13 @@ class QuerySet(DJQuerySet):
         if not filter_calls:
             return {}
         names, multi_args, multi_kwargs = zip(*filter_calls)
+        args = {
+            key: value
+            for arg in multi_args if arg
+            for key, value in arg[0].children
+        }
         kwargs = reduce(lambda x, y: {**x, **y}, multi_kwargs, {})
-
+        kwargs.update(args)
         striped_kwargs = {}
         for k, v in kwargs.items():
             k = k.replace('__exact', '')

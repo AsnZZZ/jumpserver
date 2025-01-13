@@ -1,10 +1,12 @@
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
+from assets.models import Asset
 from common.serializers.fields import LabeledChoiceField
 from common.utils import pretty_string
 from orgs.mixins.serializers import BulkOrgResourceModelSerializer
 from terminal.session_lifecycle import lifecycle_events_map
+from users.models import User
 from .terminal import TerminalSmallSerializer
 from ..const import SessionType, SessionErrorReason
 from ..models import Session
@@ -58,10 +60,52 @@ class SessionSerializer(BulkOrgResourceModelSerializer):
             'terminal_display': {'label': _('Terminal display')},
         }
 
+    def get_fields(self):
+        fields = super().get_fields()
+        self.pop_fields_if_need(fields)
+        return fields
+
+    def pop_fields_if_need(self, fields):
+        request = self.context.get('request')
+        if request and request.method != 'GET':
+            fields.pop("command_amount", None)
+
     def validate_asset(self, value):
         max_length = self.Meta.model.asset.field.max_length
         value = pretty_string(value, max_length=max_length)
         return value
+
+    @staticmethod
+    def get_valid_instance(model_cls, instance_id, field_name, error_message, validation_attr='is_active'):
+        if instance_id is None:
+            raise serializers.ValidationError({field_name: _('This field is required.')})
+        instance = model_cls.objects.filter(id=instance_id).first()
+        if not instance or not getattr(instance, validation_attr, False):
+            raise serializers.ValidationError({field_name: error_message})
+        return instance
+
+    def create(self, validated_data):
+        user_id = validated_data.get('user_id')
+        asset_id = validated_data.get('asset_id')
+
+        user = self.get_valid_instance(
+            User,
+            user_id,
+            'user_id',
+            _('No user or invalid user'),
+            validation_attr='is_valid'
+        )
+
+        asset = self.get_valid_instance(
+            Asset,
+            asset_id,
+            'asset_id',
+            _('No asset or invalid asset')
+        )
+
+        validated_data['user'] = str(user)
+        validated_data['asset'] = str(asset)
+        return super().create(validated_data)
 
 
 class SessionDisplaySerializer(SessionSerializer):
@@ -74,7 +118,7 @@ class SessionDisplaySerializer(SessionSerializer):
 
 class ReplaySerializer(serializers.Serializer):
     file = serializers.FileField(allow_empty_file=True)
-    version = serializers.IntegerField(write_only=True, required=False, min_value=2, max_value=4)
+    version = serializers.IntegerField(write_only=True, required=False, min_value=2, max_value=5)
 
 
 class SessionJoinValidateSerializer(serializers.Serializer):

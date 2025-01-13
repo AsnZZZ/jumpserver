@@ -45,6 +45,12 @@ class Protocol(ChoicesMixin, models.TextChoices):
                         'default': False,
                         'label': _('Old SSH version'),
                         'help_text': _('Old SSH version like openssh 5.x or 6.x')
+                    },
+                    'nc': {
+                        'type': 'bool',
+                        'default': False,
+                        'label': 'Netcat (nc)',
+                        'help_text': _('Netcat help text')
                     }
                 }
             },
@@ -80,7 +86,18 @@ class Protocol(ChoicesMixin, models.TextChoices):
                         'choices': [('any', _('Any')), ('rdp', 'RDP'), ('tls', 'TLS'), ('nla', 'NLA')],
                         'default': 'any',
                         'label': _('Security'),
-                        'help_text': _("Security layer to use for the connection")
+                        'help_text': _("Security layer to use for the connection:<br>"
+                                       "Any<br>"
+                                       "Automatically select the security mode based on the security protocols "
+                                       "supported by both the client and the server<br>"
+                                       "RDP<br>"
+                                       "Legacy RDP encryption. This mode is generally only used for older Windows "
+                                       "servers or in cases where a standard Windows login screen is desired<br>"
+                                       "TLS<br>"
+                                       "RDP authentication and encryption implemented via TLS.<br>"
+                                       "NLA<br>"
+                                       "This mode uses TLS encryption and requires the username and password "
+                                       "to be given in advance")
                     },
                     'ad_domain': {
                         'type': 'str',
@@ -212,7 +229,7 @@ class Protocol(ChoicesMixin, models.TextChoices):
                     'connection_options': {
                         'type': 'str',
                         'default': '',
-                        'label': _('Connection options'),
+                        'label': _('Connect options'),
                         'help_text': _('The connection specific options eg. retryWrites=false&retryReads=false')
                     }
                 }

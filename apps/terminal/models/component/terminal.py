@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from common.const.signals import SKIP_SIGNAL
+from common.const.signals import OP_LOG_SKIP_SIGNAL
 from common.db.models import JMSBaseModel
 from common.utils import get_logger, lazyproperty
 from orgs.utils import tmp_to_root_org
@@ -127,6 +127,13 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
             'GPT_MODEL': settings.GPT_MODEL,
         }
 
+    @staticmethod
+    def get_xpack_license():
+        return {
+            'XPACK_LICENSE_IS_VALID': settings.XPACK_LICENSE_IS_VALID,
+            'XPACK_LICENSE_CONTENT': settings.XPACK_LICENSE_CONTENT
+        }
+
     @property
     def config(self):
         configs = {}
@@ -138,6 +145,7 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
         configs.update(self.get_replay_storage_setting())
         configs.update(self.get_login_title_setting())
         configs.update(self.get_chat_ai_setting())
+        configs.update(self.get_xpack_license())
         configs.update({
             'SECURITY_MAX_IDLE_TIME': settings.SECURITY_MAX_IDLE_TIME,
             'SECURITY_SESSION_SHARE': settings.SECURITY_SESSION_SHARE,
@@ -152,13 +160,12 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
 
     def delete(self, using=None, keep_parents=False):
         if self.user:
-            setattr(self.user, SKIP_SIGNAL, True)
+            setattr(self.user, OP_LOG_SKIP_SIGNAL, True)
             self.user.delete()
         self.name = self.name + '_' + uuid.uuid4().hex[:8]
         self.user = None
         self.is_deleted = True
         self.save()
-        return
 
     def __str__(self):
         status = "Active"

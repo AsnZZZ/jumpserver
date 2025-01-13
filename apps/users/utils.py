@@ -1,6 +1,7 @@
 # ~*~ coding: utf-8 ~*~
 #
 import base64
+import json
 import logging
 import os
 import re
@@ -9,9 +10,10 @@ import time
 import pyotp
 from django.conf import settings
 from django.core.cache import cache
+from django.utils.translation import gettext as _
 
 from common.tasks import send_mail_async
-from common.utils import reverse, get_object_or_none, ip, safe_next_url
+from common.utils import reverse, get_object_or_none, ip, safe_next_url, FlashMessageUtil
 from .models import User
 
 logger = logging.getLogger('jumpserver.users')
@@ -45,10 +47,38 @@ def get_user_or_pre_auth_user(request):
     return user
 
 
+def get_redirect_client_url(request):
+    bearer_token, date_expired = request.user.create_bearer_token(request, age=3600*36*5)
+    data = {
+        'type': 'auth',
+        'bearer_token': bearer_token,
+        'date_expired': date_expired.timestamp()
+    }
+    buf = base64.b64encode(json.dumps(data).encode()).decode()
+    redirect_url = 'jms://{}'.format(buf)
+    message_data = {
+        'title': _('Auth success'),
+        'message': _("Redirecting to JumpServer Client"),
+        'redirect_url': redirect_url,
+        'interval': 1,
+        'has_cancel': False,
+    }
+    url = FlashMessageUtil.gen_message_url(message_data)
+    return url
+
+
 def redirect_user_first_login_or_index(request, redirect_field_name):
-    url = request.POST.get(redirect_field_name)
-    if not url:
-        url = request.GET.get(redirect_field_name)
+    sources = [request.session, request.POST, request.GET]
+
+    url = ''
+    for source in sources:
+        url = source.get(redirect_field_name)
+        if url:
+            break
+
+    if url == 'client':
+        url = get_redirect_client_url(request)
+
     url = safe_next_url(url, request=request)
     # 防止 next 地址为 None
     if not url or url.lower() in ['none']:
@@ -110,6 +140,7 @@ class BlockUtil:
     BLOCK_KEY_TMPL: str
 
     def __init__(self, username):
+        username = username.lower()
         self.block_key = self.BLOCK_KEY_TMPL.format(username)
         self.key_ttl = int(settings.SECURITY_LOGIN_LIMIT_TIME) * 60
 
@@ -125,6 +156,7 @@ class BlockUtilBase:
     BLOCK_KEY_TMPL: str
 
     def __init__(self, username, ip):
+        username = username.lower()
         self.username = username
         self.ip = ip
         self.limit_key = self.LIMIT_KEY_TMPL.format(username, ip)
@@ -158,6 +190,7 @@ class BlockUtilBase:
 
     @classmethod
     def unblock_user(cls, username):
+        username = username.lower()
         key_limit = cls.LIMIT_KEY_TMPL.format(username, '*')
         key_block = cls.BLOCK_KEY_TMPL.format(username)
         # Redis 尽量不要用通配
@@ -166,6 +199,7 @@ class BlockUtilBase:
 
     @classmethod
     def is_user_block(cls, username):
+        username = username.lower()
         block_key = cls.BLOCK_KEY_TMPL.format(username)
         return bool(cache.get(block_key))
 
@@ -243,6 +277,32 @@ def construct_user_email(username, email, email_suffix=''):
     emails = [email, username]
     email = validate_emails(emails)
     return email or default
+
+
+def flatten_dict(d, parent_key='', sep='.'):
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.update(flatten_dict(v, new_key, sep=sep))
+        elif isinstance(v, list):
+            for i, item in enumerate(v):
+                if isinstance(item, dict):
+                    items.update(flatten_dict(item, f"{new_key}[{i}]", sep=sep))
+                else:
+                    items[f"{new_key}[{i}]"] = item
+        else:
+            items[new_key] = v
+    return items
+
+
+def map_attributes(default_profile, profile, attributes):
+    detail = default_profile
+    for local_name, remote_name in attributes.items():
+        value = profile.get(remote_name)
+        if value:
+            detail[local_name] = value
+    return detail
 
 
 def get_current_org_members():

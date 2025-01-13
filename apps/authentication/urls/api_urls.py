@@ -14,6 +14,7 @@ router.register('temp-tokens', api.TempTokenViewSet, 'temp-token')
 router.register('connection-token', api.ConnectionTokenViewSet, 'connection-token')
 router.register('super-connection-token', api.SuperConnectionTokenViewSet, 'super-connection-token')
 router.register('confirm', api.UserConfirmationViewSet, 'confirm')
+router.register('ssh-key', api.SSHkeyViewSet, 'ssh-key')
 
 urlpatterns = [
     path('<str:backend>/qr/unbind/', api.QRUnBindForUserApi.as_view(), name='qr-unbind'),
@@ -24,6 +25,12 @@ urlpatterns = [
 
     path('lark/event/subscription/callback/', api.LarkEventSubscriptionCallback.as_view(),
          name='lark-event-subscription-callback'),
+
+    path('face/callback/', api.FaceCallbackApi.as_view(), name='face-callback'),
+    path('face/context/', api.FaceContextApi.as_view(), name='face-context'),
+
+    path('face-monitor/callback/', api.FaceMonitorCallbackApi.as_view(), name='face-monitor-callback'),
+    path('face-monitor/context/', api.FaceMonitorContextApi.as_view(), name='face-monitor-context'),
 
     path('auth/', api.TokenCreateApi.as_view(), name='user-auth'),
     path('confirm-oauth/', api.ConfirmBindORUNBindOAuth.as_view(), name='confirm-oauth'),

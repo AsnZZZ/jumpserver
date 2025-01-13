@@ -178,7 +178,7 @@ class AccountCreateUpdateSerializerMixin(serializers.Serializer):
             instance.save()
             return instance, 'updated'
         else:
-            raise serializers.ValidationError('Account already exists')
+            raise serializers.ValidationError(_('Account already exists'))
 
     def create(self, validated_data):
         push_now = validated_data.pop('push_now', None)
@@ -247,6 +247,7 @@ class AccountSerializer(AccountCreateUpdateSerializerMixin, BaseAccountSerialize
             'name': {'required': False},
             'source_id': {'required': False, 'allow_null': True},
         }
+        fields_unimport_template = ['params']
 
     @classmethod
     def setup_eager_loading(cls, queryset):
@@ -384,7 +385,7 @@ class AssetAccountBulkSerializer(
 
         _results = {}
         for asset in assets:
-            if asset not in secret_type_supports:
+            if asset not in secret_type_supports and asset.category != Category.CUSTOM:
                 _results[asset] = {
                     'error': _('Asset does not support this secret type: %s') % secret_type,
                     'state': 'error',

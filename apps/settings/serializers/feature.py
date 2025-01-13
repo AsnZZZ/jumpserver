@@ -1,15 +1,17 @@
 import uuid
 
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from assets.const import Protocol
 from common.serializers.fields import EncryptedField
+from common.utils import date_expired_default
 
 __all__ = [
-    'AnnouncementSettingSerializer', 'OpsSettingSerializer',
-    'VaultSettingSerializer', 'TicketSettingSerializer',
-    'ChatAISettingSerializer', 'VirtualAppSerializer',
+    'AnnouncementSettingSerializer', 'OpsSettingSerializer', 'VaultSettingSerializer',
+    'HashicorpKVSerializer', 'AzureKVSerializer', 'TicketSettingSerializer',
+    'ChatAISettingSerializer', 'VirtualAppSerializer', 'AmazonSMSerializer',
 ]
 
 
@@ -21,6 +23,8 @@ class AnnouncementSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True,
         label=_("More Link"), default='',
     )
+    DATE_START = serializers.DateTimeField(default=timezone.now, label=_("Date start"))
+    DATE_END = serializers.DateTimeField(default=date_expired_default, label=_("Date end"))
 
     def to_representation(self, instance):
         defaults = {'ID': '', 'SUBJECT': '', 'CONTENT': '', 'LINK': '', 'ENABLED': False}
@@ -39,23 +43,24 @@ class AnnouncementSettingSerializer(serializers.Serializer):
     ANNOUNCEMENT = AnnouncementSerializer(label=_("Announcement"))
 
 
-class VaultSettingSerializer(serializers.Serializer):
-    PREFIX_TITLE = _('HCP Vault')
+class BaseVaultSettingSerializer(serializers.Serializer):
+
+    def validate(self, data):
+        from accounts.signal_handlers import vault_pub_sub
+        data = super().validate(data)
+        vault_pub_sub.publish('vault')
+        return data
+
+
+class VaultSettingSerializer(BaseVaultSettingSerializer, serializers.Serializer):
+    PREFIX_TITLE = _('Vault')
 
     VAULT_ENABLED = serializers.BooleanField(
         required=False, label=_('Vault'), read_only=True
     )
-    VAULT_HCP_HOST = serializers.CharField(
-        max_length=256, allow_blank=True, required=False, label=_('Host')
+    VAULT_BACKEND = serializers.CharField(
+        max_length=16, required=False, label=_('Vault provider'), read_only=True
     )
-    VAULT_HCP_TOKEN = EncryptedField(
-        max_length=256, allow_blank=True, required=False, label=_('Token'), default=''
-    )
-    VAULT_HCP_MOUNT_POINT = serializers.CharField(
-        max_length=256, allow_blank=True, required=False, label=_('Mount Point'),
-        default='jumpserver'
-    )
-
     HISTORY_ACCOUNT_CLEAN_LIMIT = serializers.IntegerField(
         default=999, max_value=999, min_value=1,
         required=False, label=_('Record limit'),
@@ -66,6 +71,49 @@ class VaultSettingSerializer(serializers.Serializer):
             'If the value reaches or exceeds 999 (default), '
             'no historical account deletion will be performed'
         )
+    )
+
+
+class HashicorpKVSerializer(BaseVaultSettingSerializer, serializers.Serializer):
+    PREFIX_TITLE = _('HCP Vault')
+    VAULT_HCP_HOST = serializers.CharField(
+        max_length=256, allow_blank=True, required=False, label=_('Host')
+    )
+    VAULT_HCP_TOKEN = EncryptedField(
+        max_length=256, allow_blank=True, required=False, label=_('Token'), default=''
+    )
+    VAULT_HCP_MOUNT_POINT = serializers.CharField(
+        max_length=256, allow_blank=True, required=False, label=_('Mount Point')
+    )
+
+
+class AzureKVSerializer(BaseVaultSettingSerializer, serializers.Serializer):
+    PREFIX_TITLE = _('Azure Key Vault')
+    VAULT_AZURE_HOST = serializers.CharField(
+        max_length=256, allow_blank=True, required=False, label=_('Host')
+    )
+    VAULT_AZURE_CLIENT_ID = serializers.CharField(
+        max_length=128, allow_blank=True, required=False, label=_('Client ID')
+    )
+    VAULT_AZURE_CLIENT_SECRET = EncryptedField(
+        max_length=4096, allow_blank=True, required=False, label=_('Client Secret'), default=''
+    )
+    VAULT_AZURE_TENANT_ID = serializers.CharField(
+        max_length=128, allow_blank=True, required=False, label=_('Tenant ID')
+    )
+
+
+class AmazonSMSerializer(serializers.Serializer):
+    PREFIX_TITLE = _('Amazon Secrets Manager')
+    VAULT_AWS_REGION_NAME = serializers.CharField(
+        max_length=256, required=True, label=_('Region')
+    )
+    VAULT_AWS_ACCESS_KEY_ID = serializers.CharField(
+        max_length=1024, required=True, label=_('Access key ID')
+    )
+    VAULT_AWS_ACCESS_SECRET_KEY = EncryptedField(
+        max_length=1024, required=False, allow_blank=True,
+        label=_('Access key secret'), default=''
     )
 
 

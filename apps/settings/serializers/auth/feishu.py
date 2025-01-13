@@ -5,6 +5,8 @@ from common.serializers.fields import EncryptedField
 
 __all__ = ['FeiShuSettingSerializer']
 
+from .base import OrgListField
+
 
 class FeiShuSettingSerializer(serializers.Serializer):
     PREFIX_TITLE = _('FeiShu')
@@ -15,7 +17,8 @@ class FeiShuSettingSerializer(serializers.Serializer):
     FEISHU_RENAME_ATTRIBUTES = serializers.JSONField(
         required=False, label=_('User attribute'),
         help_text=_(
-            "User attribute mapping, where the `key` is the CAS service user attribute name "
-            "and the `value` is the JumpServer user attribute name"
+            'User attribute mapping, where the `key` is the JumpServer user attribute name and the '
+            '`value` is the FeiShu service user attribute name'
         )
     )
+    FEISHU_ORG_IDS = OrgListField()

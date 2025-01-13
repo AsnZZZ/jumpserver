@@ -13,11 +13,9 @@ from authentication.const import ConfirmType
 from authentication.mixins import AuthMixin
 from authentication.permissions import UserConfirmation
 from common.sdk.im.wecom import URL
-from common.sdk.im.wecom import WeCom
+from common.sdk.im.wecom import WeCom, wecom_tool
 from common.utils import get_logger
-from common.utils.common import get_request_ip
 from common.utils.django import reverse, get_object_or_none, safe_next_url
-from common.utils.random import random_string
 from common.views.mixins import UserConfirmRequiredExceptionMixin, PermissionsMixin
 from users.models import User
 from users.views import UserVerifyPasswordView
@@ -25,8 +23,6 @@ from .base import BaseLoginCallbackView, BaseBindCallbackView
 from .mixins import METAMixin, FlashMessageMixin
 
 logger = get_logger(__file__)
-
-WECOM_STATE_SESSION_KEY = '_wecom_state'
 
 
 class WeComBaseMixin(UserConfirmRequiredExceptionMixin, PermissionsMixin, FlashMessageMixin, View):
@@ -45,7 +41,7 @@ class WeComBaseMixin(UserConfirmRequiredExceptionMixin, PermissionsMixin, FlashM
             )
 
     def verify_state(self):
-        return self.verify_state_with_session_key(WECOM_STATE_SESSION_KEY)
+        return wecom_tool.check_state(self.request.GET.get('state'), self.request)
 
     def get_already_bound_response(self, redirect_url):
         msg = _('WeCom is already bound')
@@ -56,13 +52,10 @@ class WeComBaseMixin(UserConfirmRequiredExceptionMixin, PermissionsMixin, FlashM
 class WeComQRMixin(WeComBaseMixin, View):
 
     def get_qr_url(self, redirect_uri):
-        state = random_string(16)
-        self.request.session[WECOM_STATE_SESSION_KEY] = state
-
         params = {
             'appid': settings.WECOM_CORPID,
             'agentid': settings.WECOM_AGENTID,
-            'state': state,
+            'state': wecom_tool.gen_state(request=self.request),
             'redirect_uri': redirect_uri,
         }
         url = URL.QR_CONNECT + '?' + urlencode(params)
@@ -74,13 +67,11 @@ class WeComOAuthMixin(WeComBaseMixin, View):
     def get_oauth_url(self, redirect_uri):
         if not settings.AUTH_WECOM:
             return reverse('authentication:login')
-        state = random_string(16)
-        self.request.session[WECOM_STATE_SESSION_KEY] = state
 
         params = {
             'appid': settings.WECOM_CORPID,
             'agentid': settings.WECOM_AGENTID,
-            'state': state,
+            'state': wecom_tool.gen_state(request=self.request),
             'redirect_uri': redirect_uri,
             'response_type': 'code',
             'scope': 'snsapi_base',
@@ -94,6 +85,8 @@ class WeComQRBindView(WeComQRMixin, View):
 
     def get(self, request: HttpRequest):
         redirect_url = request.GET.get('redirect_url')
+        query_string = request.GET.urlencode()
+        redirect_url = f'{redirect_url}?{query_string}'
         redirect_uri = reverse('authentication:wecom-qr-bind-callback', external=True)
         redirect_uri += '?' + urlencode({'redirect_url': redirect_url})
 

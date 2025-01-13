@@ -8,7 +8,7 @@ from django.utils.translation import gettext_lazy as _
 from xlsxwriter import Workbook
 
 from accounts.const import AutomationTypes, SecretType, SSHKeyStrategy, SecretStrategy, ChangeSecretRecordStatusChoice
-from accounts.models import ChangeSecretRecord
+from accounts.models import ChangeSecretRecord, BaseAccountQuerySet
 from accounts.notifications import ChangeSecretExecutionTaskMsg, ChangeSecretFailedMsg
 from accounts.serializers import ChangeSecretRecordBackUpSerializer
 from assets.const import HostTypes
@@ -50,9 +50,6 @@ class ChangeSecretManager(AccountBasePlaybookManager):
         kwargs['exclusive'] = 'yes' if kwargs['strategy'] == SSHKeyStrategy.set else 'no'
 
         if kwargs['strategy'] == SSHKeyStrategy.set_jms:
-            username = account.username
-            path = f'/{username}' if username == "root" else f'/home/{username}'
-            kwargs['dest'] = f'{path}/.ssh/authorized_keys'
             kwargs['regexp'] = '.*{}$'.format(secret.split()[2].strip())
         return kwargs
 
@@ -68,10 +65,10 @@ class ChangeSecretManager(AccountBasePlaybookManager):
         else:
             return self.secret_generator(secret_type).get_secret()
 
-    def get_accounts(self, privilege_account):
+    def get_accounts(self, privilege_account) -> BaseAccountQuerySet | None:
         if not privilege_account:
-            print(f'not privilege account')
-            return []
+            print('Not privilege account')
+            return
 
         asset = privilege_account.asset
         accounts = asset.accounts.all()
@@ -108,6 +105,9 @@ class ChangeSecretManager(AccountBasePlaybookManager):
             print(f'Windows {asset} does not support ssh key push')
             return inventory_hosts
 
+        if asset.type == HostTypes.WINDOWS:
+            accounts = accounts.filter(secret_type=SecretType.PASSWORD)
+
         host['ssh_params'] = {}
         for account in accounts:
             h = deepcopy(host)
@@ -127,6 +127,7 @@ class ChangeSecretManager(AccountBasePlaybookManager):
                 recorder = ChangeSecretRecord(
                     asset=asset, account=account, execution=self.execution,
                     old_secret=account.secret, new_secret=new_secret,
+                    comment=f'{account.username}@{asset.address}'
                 )
                 records.append(recorder)
             else:
@@ -159,6 +160,10 @@ class ChangeSecretManager(AccountBasePlaybookManager):
         ChangeSecretRecord.objects.bulk_create(records)
         return inventory_hosts
 
+    @staticmethod
+    def require_update_version(account, recorder):
+        return account.secret != recorder.new_secret
+
     def on_host_success(self, host, result):
         recorder = self.name_recorder_mapper.get(host)
         if not recorder:
@@ -170,6 +175,8 @@ class ChangeSecretManager(AccountBasePlaybookManager):
         if not account:
             print("Account not found, deleted ?")
             return
+
+        version_update_required = self.require_update_version(account, recorder)
         account.secret = recorder.new_secret
         account.date_updated = timezone.now()
 
@@ -179,7 +186,10 @@ class ChangeSecretManager(AccountBasePlaybookManager):
         while retry_count < max_retries:
             try:
                 recorder.save()
-                account.save(update_fields=['secret', 'version', 'date_updated'])
+                account_update_fields = ['secret', 'date_updated']
+                if version_update_required:
+                    account_update_fields.append('version')
+                account.save(update_fields=account_update_fields)
                 break
             except Exception as e:
                 retry_count += 1

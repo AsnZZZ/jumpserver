@@ -1,7 +1,6 @@
 import textwrap
 import traceback
 from itertools import chain
-from typing import Iterable
 
 from celery import shared_task
 from django.utils.translation import gettext_lazy as _
@@ -43,7 +42,13 @@ class MessageType(type):
         return clz
 
 
-@shared_task(verbose_name=_('Publish the station message'))
+@shared_task(
+    verbose_name=_('Publish the station message'),
+    description=_(
+        """This task needs to be executed for sending internal messages for system alerts, 
+        work orders, and other notifications"""
+    )
+)
 def publish_task(receive_user_ids, backends_msg_mapper):
     Message.send_msg(receive_user_ids, backends_msg_mapper)
 
@@ -122,13 +127,16 @@ class Message(metaclass=MessageType):
     def get_html_msg(self) -> dict:
         return self.get_common_msg()
 
-    def get_markdown_msg(self) -> dict:
+    @staticmethod
+    def html_to_markdown(html_msg):
         h = HTML2Text()
-        h.body_width = 300
-        msg = self.get_html_msg()
-        content = msg['message']
-        msg['message'] = h.handle(content)
-        return msg
+        h.body_width = 0
+        content = html_msg['message']
+        html_msg['message'] = h.handle(content)
+        return html_msg
+
+    def get_markdown_msg(self) -> dict:
+        return self.html_to_markdown(self.get_html_msg())
 
     def get_text_msg(self) -> dict:
         h = HTML2Text()

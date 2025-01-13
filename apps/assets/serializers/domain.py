@@ -27,7 +27,7 @@ class DomainSerializer(ResourceLabelsMixin, BulkOrgResourceModelSerializer):
         model = Domain
         fields_mini = ['id', 'name']
         fields_small = fields_mini + ['comment']
-        fields_m2m = ['assets', 'gateways', 'assets_amount']
+        fields_m2m = ['assets', 'gateways', 'labels', 'assets_amount']
         read_only_fields = ['date_created']
         fields = fields_small + fields_m2m + read_only_fields
         extra_kwargs = {
@@ -57,9 +57,7 @@ class DomainSerializer(ResourceLabelsMixin, BulkOrgResourceModelSerializer):
 
     @classmethod
     def setup_eager_loading(cls, queryset):
-        queryset = queryset \
-            .annotate(assets_amount=Count('assets')) \
-            .prefetch_related('labels', 'labels__label')
+        queryset = queryset.prefetch_related('labels', 'labels__label')
         return queryset
 
 
@@ -70,7 +68,7 @@ class DomainListSerializer(DomainSerializer):
     @classmethod
     def setup_eager_loading(cls, queryset):
         queryset = queryset.annotate(
-            assets_amount=Count('assets', filter=~Q(assets__platform__name='Gateway'), distinct=True),
+            assets_amount=Count('assets', filter=~Q(assets__platform__name__startswith='Gateway'), distinct=True),
         )
         return queryset
 

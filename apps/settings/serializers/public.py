@@ -30,9 +30,12 @@ class PrivateSettingSerializer(PublicSettingSerializer):
     SECURITY_LUNA_REMEMBER_AUTH = serializers.BooleanField()
     SECURITY_WATERMARK_ENABLED = serializers.BooleanField()
     SESSION_EXPIRE_AT_BROWSER_CLOSE = serializers.BooleanField()
+    VIEW_ASSET_ONLINE_SESSION_INFO = serializers.BooleanField()
     PASSWORD_RULE = serializers.DictField()
     SECURITY_SESSION_SHARE = serializers.BooleanField()
     XPACK_LICENSE_IS_VALID = serializers.BooleanField()
+    XPACK_LICENSE_EDITION_ULTIMATE = serializers.BooleanField()
+    FACE_RECOGNITION_ENABLED = serializers.BooleanField()
     XPACK_LICENSE_INFO = serializers.DictField()
     HELP_DOCUMENT_URL = serializers.CharField()
     HELP_SUPPORT_URL = serializers.CharField()
@@ -62,8 +65,11 @@ class PrivateSettingSerializer(PublicSettingSerializer):
     CHAT_AI_ENABLED = serializers.BooleanField()
     GPT_MODEL = serializers.CharField()
     FILE_UPLOAD_SIZE_LIMIT_MB = serializers.IntegerField()
+    FTP_FILE_MAX_STORE = serializers.IntegerField()
     LOKI_LOG_ENABLED = serializers.BooleanField()
     TOOL_USER_ENABLED = serializers.BooleanField()
+
+    DEFAULT_EXPIRED_YEARS = serializers.IntegerField()
 
 
 class ServerInfoSerializer(serializers.Serializer):

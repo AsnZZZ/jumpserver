@@ -3,14 +3,18 @@
 import json
 import asyncio
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.cache import cache
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from django.utils import translation
+from urllib.parse import parse_qs
 
 from common.db.utils import close_old_connections
 from common.utils import get_logger
 from settings.serializers import (
+    LDAPHATestConfigSerializer,
     LDAPTestConfigSerializer,
     LDAPTestLoginSerializer
 )
@@ -21,6 +25,7 @@ from settings.utils import (
     LDAPServerUtil, LDAPCacheUtil, LDAPImportUtil, LDAPSyncUtil,
     LDAP_USE_CACHE_FLAGS, LDAPTestUtil
 )
+from .const import ImportStatus
 from .tools import (
     verbose_ping, verbose_telnet, verbose_nmap,
     verbose_tcpdump, verbose_traceroute
@@ -33,11 +38,27 @@ TASK_STATUS_IS_OVER = 'OVER'
 
 
 class ToolsWebsocket(AsyncJsonWebsocketConsumer):
+    is_closed: bool = False
+
+    @staticmethod
+    @sync_to_async
+    def get_user_roles(user):
+        return [str(i) for i in user.system_roles.values_list('id', flat=True)]
+
+    async def is_superuser(self, user):
+        from rbac.builtin import BuiltinRole
+
+        ids = await self.get_user_roles(user)
+        return BuiltinRole.system_admin.id in ids
 
     async def connect(self):
         user = self.scope["user"]
         if user.is_authenticated:
-            await self.accept()
+            has_perm = await sync_to_async(user.has_perm)('rbac.view_systemtools')
+            if await self.is_superuser(user) or (settings.TOOL_USER_ENABLED and has_perm):
+                await self.accept()
+            else:
+                await self.close()
         else:
             await self.close()
 
@@ -92,14 +113,24 @@ class ToolsWebsocket(AsyncJsonWebsocketConsumer):
         await self.send_msg()
         await self.close()
 
+    async def close(self, code=None):
+        if self.is_closed:
+            return
+        await super().close(code)
+        self.is_closed = True
+
     async def disconnect(self, code):
         await self.close()
         close_old_connections()
 
 
 class LdapWebsocket(AsyncJsonWebsocketConsumer):
+    category: str
+
     async def connect(self):
         user = self.scope["user"]
+        query = parse_qs(self.scope['query_string'].decode())
+        self.category = query.get('category', ['ldap'])[0]
         if user.is_authenticated:
             await self.accept()
         else:
@@ -109,11 +140,14 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
         data = json.loads(text_data)
         msg_type = data.pop('msg_type', 'testing_config')
         try:
-            tool_func = getattr(self, f'run_{msg_type.lower()}')
-            ok, msg = await asyncio.to_thread(tool_func, data)
+            ok, msg = await asyncio.to_thread(self.run_func, f'run_{msg_type.lower()}', data)
             await self.send_msg(ok, msg)
         except Exception as error:
             await self.send_msg(msg='Exception: %s' % error)
+
+    def run_func(self, func_name, data):
+        with translation.override(getattr(self.scope['user'], 'lang', settings.LANGUAGE_CODE)):
+            return getattr(self, func_name)(data)
 
     async def send_msg(self, ok=True, msg=''):
         await self.send_json({'ok': ok, 'msg': f'{msg}'})
@@ -122,30 +156,21 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
         await self.close()
         close_old_connections()
 
-    @staticmethod
-    def get_ldap_config(serializer):
-        server_uri = serializer.validated_data["AUTH_LDAP_SERVER_URI"]
-        bind_dn = serializer.validated_data["AUTH_LDAP_BIND_DN"]
-        password = serializer.validated_data["AUTH_LDAP_BIND_PASSWORD"]
-        use_ssl = serializer.validated_data.get("AUTH_LDAP_START_TLS", False)
-        search_ou = serializer.validated_data["AUTH_LDAP_SEARCH_OU"]
-        search_filter = serializer.validated_data["AUTH_LDAP_SEARCH_FILTER"]
-        attr_map = serializer.validated_data["AUTH_LDAP_USER_ATTR_MAP"]
-        auth_ldap = serializer.validated_data.get('AUTH_LDAP', False)
-
-        if not password:
-            password = settings.AUTH_LDAP_BIND_PASSWORD
+    def get_ldap_config(self, serializer):
+        prefix = 'AUTH_LDAP_' if self.category == 'ldap' else 'AUTH_LDAP_HA_'
 
         config = {
-            'server_uri': server_uri,
-            'bind_dn': bind_dn,
-            'password': password,
-            'use_ssl': use_ssl,
-            'search_ou': search_ou,
-            'search_filter': search_filter,
-            'attr_map': attr_map,
-            'auth_ldap': auth_ldap
+            'server_uri': serializer.validated_data.get(f"{prefix}SERVER_URI"),
+            'bind_dn': serializer.validated_data.get(f"{prefix}BIND_DN"),
+            'password': (serializer.validated_data.get(f"{prefix}BIND_PASSWORD") or
+                         getattr(settings, f"{prefix}BIND_PASSWORD")),
+            'use_ssl': serializer.validated_data.get(f"{prefix}START_TLS", False),
+            'search_ou': serializer.validated_data.get(f"{prefix}SEARCH_OU"),
+            'search_filter': serializer.validated_data.get(f"{prefix}SEARCH_FILTER"),
+            'attr_map': serializer.validated_data.get(f"{prefix}USER_ATTR_MAP"),
+            'auth_ldap': serializer.validated_data.get(f"{prefix.rstrip('_')}", False)
         }
+
         return config
 
     @staticmethod
@@ -157,7 +182,10 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
         cache.set(task_key, TASK_STATUS_IS_OVER, ttl)
 
     def run_testing_config(self, data):
-        serializer = LDAPTestConfigSerializer(data=data)
+        if self.category == 'ldap':
+            serializer = LDAPTestConfigSerializer(data=data)
+        else:
+            serializer = LDAPHATestConfigSerializer(data=data)
         if not serializer.is_valid():
             self.send_msg(msg=f'error: {str(serializer.errors)}')
         config = self.get_ldap_config(serializer)
@@ -172,14 +200,13 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
             self.send_msg(msg=f'error: {str(serializer.errors)}')
         username = serializer.validated_data['username']
         password = serializer.validated_data['password']
-        ok, msg = LDAPTestUtil().test_login(username, password)
+        ok, msg = LDAPTestUtil(category=self.category).test_login(username, password)
         return ok, msg
 
-    @staticmethod
-    def run_sync_user(data):
-        sync_util = LDAPSyncUtil()
+    def run_sync_user(self, data):
+        sync_util = LDAPSyncUtil(category=self.category)
         sync_util.clear_cache()
-        sync_ldap_user()
+        sync_ldap_user(category=self.category)
         msg = sync_util.get_task_error_msg()
         ok = False if msg else True
         return ok, msg
@@ -192,20 +219,32 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
         try:
             users = self.get_ldap_users(username_list, cache_police)
             if users is None:
-                msg = _('Get ldap users is None')
-
-            orgs = self.get_orgs(org_ids)
-            new_users, error_msg = LDAPImportUtil().perform_import(users, orgs)
-            if error_msg:
-                msg = error_msg
-
-            count = users if users is None else len(users)
-            orgs_name = ', '.join([str(org) for org in orgs])
-            ok = True
-            msg = _('Imported {} users successfully (Organization: {})').format(count, orgs_name)
+                msg = _('No LDAP user was found')
+            else:
+                orgs = self.get_orgs(org_ids)
+                new_users, error_msg = LDAPImportUtil().perform_import(users, orgs)
+                ok = True
+                success_count = len(users) - len(error_msg)
+                msg = _('Total {}, success {}, failure {}').format(
+                    len(users), success_count, len(error_msg)
+                )
+                self.set_users_status(users, error_msg)
         except Exception as e:
             msg = str(e)
         return ok, msg
+
+    def set_users_status(self, import_users, errors):
+        util = LDAPCacheUtil(category=self.category)
+        all_users = util.get_users()
+        import_usernames = [u['username'] for u in import_users]
+        errors_mapper = {k: v for err in errors for k, v in err.items()}
+        for user in all_users:
+            username = user['username']
+            if username in errors_mapper:
+                user['status'] = {'error': errors_mapper[username]}
+            elif username in import_usernames:
+                user['status'] = ImportStatus.ok
+        LDAPCacheUtil(category=self.category).set_users(all_users)
 
     @staticmethod
     def get_orgs(org_ids):
@@ -215,12 +254,11 @@ class LdapWebsocket(AsyncJsonWebsocketConsumer):
             orgs = [current_org]
         return orgs
 
-    @staticmethod
-    def get_ldap_users(username_list, cache_police):
+    def get_ldap_users(self, username_list, cache_police):
         if '*' in username_list:
-            users = LDAPServerUtil().search()
+            users = LDAPServerUtil(category=self.category).search()
         elif cache_police in LDAP_USE_CACHE_FLAGS:
-            users = LDAPCacheUtil().search(search_users=username_list)
+            users = LDAPCacheUtil(category=self.category).search(search_users=username_list)
         else:
-            users = LDAPServerUtil().search(search_users=username_list)
+            users = LDAPServerUtil(category=self.category).search(search_users=username_list)
         return users

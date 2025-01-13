@@ -2,12 +2,12 @@
 #
 import traceback
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from radiusauth.backends import RADIUSBackend, RADIUSRealmBackend
-from django.conf import settings
 
-from .base import JMSBaseAuthBackend
-
+from authentication.backends.base import JMSBaseAuthBackend
+from .signals import radius_create_user
 
 User = get_user_model()
 
@@ -28,8 +28,8 @@ class CreateUserMixin:
             email = '{}@{}'.format(username, email_suffix)
 
         user = User(username=username, name=username, email=email)
-        user.source = user.Source.radius.value
         user.save()
+        radius_create_user.send(sender=user.__class__, user=user)
         return user
 
     def _perform_radius_auth(self, client, packet):
@@ -51,10 +51,10 @@ class RadiusBaseBackend(CreateUserMixin, JMSBaseAuthBackend):
 
 
 class RadiusBackend(RadiusBaseBackend, RADIUSBackend):
-    def authenticate(self, request, username='', password='', **kwargs):
+    def authenticate(self, request, username='', password=''):
         return super().authenticate(request, username=username, password=password)
 
 
 class RadiusRealmBackend(RadiusBaseBackend, RADIUSRealmBackend):
-    def authenticate(self, request, username='', password='', realm=None, **kwargs):
+    def authenticate(self, request, username='', password='', realm=None):
         return super().authenticate(request, username=username, password=password, realm=realm)

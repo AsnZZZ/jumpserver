@@ -1,14 +1,14 @@
 import copy
-
 from urllib import parse
 
-from django.views import View
-from django.contrib import auth
-from django.urls import reverse
 from django.conf import settings
-from django.views.decorators.csrf import csrf_exempt
+from django.contrib import auth
+from django.db import IntegrityError
 from django.http import HttpResponseRedirect, HttpResponse, HttpResponseServerError
-
+from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.errors import OneLogin_Saml2_Error
 from onelogin.saml2.idp_metadata_parser import (
@@ -16,23 +16,31 @@ from onelogin.saml2.idp_metadata_parser import (
     dict_deep_merge
 )
 
-from .settings import JmsSaml2Settings
-
+from authentication.views.mixins import FlashMessageMixin
 from common.utils import get_logger
+from .settings import JmsSaml2Settings
+from ...views.utils import redirect_to_guard_view
 
 logger = get_logger(__file__)
 
 
 class PrepareRequestMixin:
-    @staticmethod
-    def is_secure():
-        url_result = parse.urlparse(settings.SITE_URL)
-        return 'on' if url_result.scheme == 'https' else 'off'
+
+    @property
+    def parsed_url(self):
+        return parse.urlparse(settings.SITE_URL)
+
+    def is_secure(self):
+        return 'on' if self.parsed_url.scheme == 'https' else 'off'
+
+    def http_host(self):
+        return f"{self.parsed_url.hostname}:{self.parsed_url.port}" \
+            if self.parsed_url.port else self.parsed_url.hostname
 
     def prepare_django_request(self, request):
         result = {
             'https': self.is_secure(),
-            'http_host': request.META['HTTP_HOST'],
+            'http_host': self.http_host(),
             'script_name': request.META['PATH_INFO'],
             'get_data': request.GET.copy(),
             'post_data': request.POST.copy()
@@ -83,6 +91,7 @@ class PrepareRequestMixin:
             ('name', 'name', False),
             ('phone', 'phone', False),
             ('comment', 'comment', False),
+            ('groups', 'groups', False),
         )
         attr_list = []
         for name, friend_name, is_required in need_attrs:
@@ -181,7 +190,7 @@ class PrepareRequestMixin:
         user_attrs = {}
         attr_mapping = settings.SAML2_RENAME_ATTRIBUTES
         attrs = saml_instance.get_attributes()
-        valid_attrs = ['username', 'name', 'email', 'comment', 'phone']
+        valid_attrs = ['username', 'name', 'email', 'comment', 'phone', 'groups']
 
         for attr, value in attrs.items():
             attr = attr.rsplit('/', 1)[-1]
@@ -238,7 +247,7 @@ class Saml2EndSessionView(View, PrepareRequestMixin):
         return HttpResponseRedirect(logout_url)
 
 
-class Saml2AuthCallbackView(View, PrepareRequestMixin):
+class Saml2AuthCallbackView(View, PrepareRequestMixin, FlashMessageMixin):
 
     def post(self, request):
         log_prompt = "Process SAML2 POST requests: {}"
@@ -267,7 +276,13 @@ class Saml2AuthCallbackView(View, PrepareRequestMixin):
 
         logger.debug(log_prompt.format('Process authenticate'))
         saml_user_data = self.get_attributes(saml_instance)
-        user = auth.authenticate(request=request, saml_user_data=saml_user_data)
+        try:
+            user = auth.authenticate(request=request, saml_user_data=saml_user_data)
+        except IntegrityError:
+            title = _("SAML2 Error")
+            msg = _('Please check if a user with the same username or email already exists')
+            response = self.get_failed_response('/', title, msg)
+            return response
         if user and user.is_valid:
             logger.debug(log_prompt.format('Login: {}'.format(user)))
             auth.login(self.request, user)
@@ -275,13 +290,20 @@ class Saml2AuthCallbackView(View, PrepareRequestMixin):
         logger.debug(log_prompt.format('Redirect'))
         redir = post_data.get('RelayState')
         if not redir or len(redir) == 0:
-          redir = "/"
+            redir = "/"
         next_url = saml_instance.redirect_to(redir)
         return HttpResponseRedirect(next_url)
 
     @csrf_exempt
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
+
+
+class Saml2AuthCallbackClientView(View):
+    http_method_names = ['get', ]
+
+    def get(self, request):
+        return redirect_to_guard_view(query_string='next=client')
 
 
 class Saml2AuthMetadataView(View, PrepareRequestMixin):

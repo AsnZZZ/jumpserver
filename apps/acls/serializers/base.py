@@ -62,7 +62,7 @@ class ActionAclSerializer(serializers.Serializer):
         self.set_action_choices()
 
     class Meta:
-        action_choices_exclude = [ActionChoices.warning]
+        action_choices_exclude = [ActionChoices.warning, ActionChoices.notify_and_warn]
 
     def set_action_choices(self):
         field_action = self.fields.get("action")
@@ -70,6 +70,13 @@ class ActionAclSerializer(serializers.Serializer):
             return
         if not settings.XPACK_LICENSE_IS_VALID:
             field_action._choices.pop(ActionChoices.review, None)
+        if not (
+            settings.XPACK_LICENSE_IS_VALID and
+            settings.XPACK_LICENSE_EDITION_ULTIMATE and
+            settings.FACE_RECOGNITION_ENABLED
+        ):
+            field_action._choices.pop(ActionChoices.face_verify, None)
+            field_action._choices.pop(ActionChoices.face_online, None)
         for choice in self.Meta.action_choices_exclude:
             field_action._choices.pop(choice, None)
 

@@ -8,3 +8,6 @@ class ActionChoices(models.TextChoices):
     review = 'review', _('Review')
     warning = 'warning', _('Warn')
     notice = 'notice', _('Notify')
+    notify_and_warn = 'notify_and_warn', _('Notify and warn')
+    face_verify = 'face_verify', _('Face Verify')
+    face_online = 'face_online', _('Face Online')

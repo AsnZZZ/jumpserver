@@ -5,6 +5,7 @@ from celery import shared_task
 from django.utils.translation import gettext_lazy as _
 
 from accounts.backends import vault_client
+from accounts.const import VaultTypeChoices
 from accounts.models import Account, AccountTemplate
 from common.utils import get_logger
 from orgs.utils import tmp_to_root_org
@@ -28,11 +29,19 @@ def sync_instance(instance):
         return "succeeded", msg
 
 
-@shared_task(verbose_name=_('Sync secret to vault'))
+@shared_task(
+    verbose_name=_('Sync secret to vault'),
+    description=_(
+        "When clicking 'Sync' in 'System Settings - Features - Account Storage' this task will be executed"
+    )
+)
 def sync_secret_to_vault():
     if not vault_client.enabled:
         # 这里不能判断 settings.VAULT_ENABLED, 必须判断当前 vault_client 的类型
         print('\033[35m>>> 当前 Vault 功能未开启, 不需要同步')
+        return
+    if VaultTypeChoices.local == vault_client.type:
+        print('\033[31m>>> 当前第三方 Vault 客户端初始化失败，数据存储在本地数据库')
         return
 
     failed, skipped, succeeded = 0, 0, 0
@@ -43,7 +52,8 @@ def sync_secret_to_vault():
         for model in to_sync_models:
             instances += list(model.objects.all())
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        max_workers = 1 if VaultTypeChoices.azure == vault_client.type else 10
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             tasks = [executor.submit(sync_instance, instance) for instance in instances]
 
             for future in as_completed(tasks):

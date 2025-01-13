@@ -1,11 +1,13 @@
+from django.db.models import Subquery, OuterRef, Count, Value
+from django.db.models.functions import Coalesce
+from django_filters import rest_framework as filters
 from rest_framework import generics
 from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
-
 from assets.const import AllTypes
 from assets.models import Platform, Node, Asset, PlatformProtocol
-from assets.serializers import PlatformSerializer, PlatformProtocolSerializer
+from assets.serializers import PlatformSerializer, PlatformProtocolSerializer, PlatformListSerializer
 from common.api import JMSModelViewSet
 from common.permissions import IsValidUser
 from common.serializers import GroupedChoiceSerializer
@@ -13,13 +15,22 @@ from common.serializers import GroupedChoiceSerializer
 __all__ = ['AssetPlatformViewSet', 'PlatformAutomationMethodsApi', 'PlatformProtocolViewSet']
 
 
+class PlatformFilter(filters.FilterSet):
+    name__startswith = filters.CharFilter(field_name='name', lookup_expr='istartswith')
+
+    class Meta:
+        model = Platform
+        fields = ['name', 'category', 'type']
+
+
 class AssetPlatformViewSet(JMSModelViewSet):
     queryset = Platform.objects.all()
     serializer_classes = {
         'default': PlatformSerializer,
+        'list': PlatformListSerializer,
         'categories': GroupedChoiceSerializer,
     }
-    filterset_fields = ['name', 'category', 'type']
+    filterset_class = PlatformFilter
     search_fields = ['name']
     ordering = ['-internal', 'name']
     rbac_perms = {
@@ -31,8 +42,11 @@ class AssetPlatformViewSet(JMSModelViewSet):
 
     def get_queryset(self):
         # 因为没有走分页逻辑，所以需要这里 prefetch
-        queryset = super().get_queryset().prefetch_related(
-            'protocols', 'automation', 'labels', 'labels__label',
+        asset_count_subquery = Asset.objects.filter(platform=OuterRef('pk')).values('platform').annotate(
+            count=Count('id')).values('count')
+        queryset = super().get_queryset().annotate(
+            assets_amount=Coalesce(Subquery(asset_count_subquery), Value(0))).prefetch_related(
+            'protocols', 'automation', 'labels', 'labels__label'
         )
         queryset = queryset.filter(type__in=AllTypes.get_types_values())
         return queryset

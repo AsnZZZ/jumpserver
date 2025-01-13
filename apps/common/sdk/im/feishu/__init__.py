@@ -6,7 +6,7 @@ from rest_framework.exceptions import APIException
 from common.sdk.im.mixin import RequestMixin, BaseRequest
 from common.sdk.im.utils import digest
 from common.utils.common import get_logger
-from users.utils import construct_user_email
+from users.utils import construct_user_email, flatten_dict, map_attributes
 
 logger = get_logger(__name__)
 
@@ -84,7 +84,6 @@ class FeiShu(RequestMixin):
     非业务数据导致的错误直接抛异常，说明是系统配置错误，业务代码不用理会
     """
     requests_cls = FeishuRequests
-    attributes = settings.LARK_RENAME_ATTRIBUTES
 
     def __init__(self, app_id, app_secret, timeout=None):
         self._app_id = app_id or ''
@@ -96,6 +95,10 @@ class FeiShu(RequestMixin):
             timeout=timeout
         )
         self.url_instance = self._requests.url_instance
+
+    @property
+    def attributes(self):
+        return settings.FEISHU_RENAME_ATTRIBUTES
 
     def get_user_id_by_code(self, code):
         # https://open.feishu.cn/document/ukTMukTMukTM/uEDO4UjLxgDO14SM4gTN
@@ -138,8 +141,8 @@ class FeiShu(RequestMixin):
         return invalid_users
 
     @staticmethod
-    def default_user_detail(data):
-        username = data['user_id']
+    def default_user_detail(data, user_id):
+        username = data.get('user_id', user_id)
         name = data.get('name', username)
         email = data.get('email') or data.get('enterprise_email')
         email = construct_user_email(username, email)
@@ -148,14 +151,18 @@ class FeiShu(RequestMixin):
         }
 
     def get_user_detail(self, user_id, **kwargs):
-        # get_user_id_by_code 已经返回个人信息，这里直接解析
-        data = kwargs['other_info']
-        data['user_id'] = user_id
-        detail = self.default_user_detail(data)
+        # https://open.feishu.cn/document/server-docs/contact-v3/user/get
+        data = {}
+        try:
+            data = self._requests.get(
+                self.url_instance.get_user_detail(user_id),
+                {'user_id_type': 'user_id'}
+            )
+            data = data['data']['user']
+        except Exception as e:
+            logger.error(f'Get user detail error: {e} data={data}')
 
-        for local_name, remote_name in self.attributes.items():
-            value = data.get(remote_name)
-            if not value:
-                continue
-            detail[local_name] = value
+        info = flatten_dict(data)
+        default_detail = self.default_user_detail(data, user_id)
+        detail = map_attributes(default_detail, info, self.attributes)
         return detail
