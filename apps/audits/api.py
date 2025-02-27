@@ -7,6 +7,7 @@ from django.db.models import F, Value, CharField, Q
 from django.db.models.functions import Cast
 from django.http import HttpResponse, FileResponse
 from django.utils.encoding import escape_uri_path
+from django_celery_beat.models import PeriodicTask
 from rest_framework import generics
 from rest_framework import status
 from rest_framework import viewsets
@@ -22,6 +23,9 @@ from common.plugins.es import QuerySet as ESQuerySet
 from common.sessions.cache import user_session_manager
 from common.storage.ftp_file import FTPFileStorageHandler
 from common.utils import is_uuid, get_logger, lazyproperty
+from ops.const import Types
+from ops.models import Job
+from ops.serializers.job import JobSerializer
 from orgs.mixins.api import OrgReadonlyModelViewSet, OrgModelViewSet
 from orgs.models import Organization
 from orgs.utils import current_org, tmp_to_root_org
@@ -33,20 +37,21 @@ from .const import ActivityChoices
 from .filters import UserSessionFilterSet, OperateLogFilterSet
 from .models import (
     FTPLog, UserLoginLog, OperateLog, PasswordChangeLog,
-    ActivityLog, JobLog, UserSession
+    ActivityLog, JobLog, UserSession, IntegrationApplicationLog
 )
 from .serializers import (
     FTPLogSerializer, UserLoginLogSerializer, JobLogSerializer,
     OperateLogSerializer, OperateLogActionDetailSerializer,
     PasswordChangeLogSerializer, ActivityUnionLogSerializer,
-    FileSerializer, UserSessionSerializer
+    FileSerializer, UserSessionSerializer, JobsAuditSerializer,
+    ServiceAccessLogSerializer
 )
 from .utils import construct_userlogin_usernames
 
 logger = get_logger(__name__)
 
 
-class JobAuditViewSet(OrgReadonlyModelViewSet):
+class JobLogAuditViewSet(OrgReadonlyModelViewSet):
     model = JobLog
     extra_filter_backends = [DatetimeRangeFilterBackend]
     date_range_filter_fields = [
@@ -56,6 +61,35 @@ class JobAuditViewSet(OrgReadonlyModelViewSet):
     filterset_fields = ['creator__name', 'material']
     serializer_class = JobLogSerializer
     ordering = ['-date_start']
+
+
+class JobsAuditViewSet(OrgModelViewSet):
+    model = Job
+    search_fields = ['creator__name']
+    filterset_fields = ['creator__name']
+    serializer_class = JobsAuditSerializer
+    ordering = ['-is_periodic', '-date_updated']
+    http_method_names = ['get', 'options', 'patch']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        queryset = queryset.exclude(type=Types.upload_file).filter(instant=False)
+        return queryset
+
+    def perform_update(self, serializer):
+        job = self.get_object()
+        is_periodic = serializer.validated_data.get('is_periodic')
+        if job.is_periodic != is_periodic:
+            job.is_periodic = is_periodic
+            job.save()
+        name, task, args, kwargs = job.get_register_task()
+        task_obj = PeriodicTask.objects.filter(name=name).first()
+        if task_obj:
+            is_periodic = job.is_periodic
+            if task_obj.enabled != is_periodic:
+                task_obj.enabled = is_periodic
+                task_obj.save()
+        return super().perform_update(serializer)
 
 
 class FTPLogViewSet(OrgModelViewSet):
@@ -146,7 +180,9 @@ class MyLoginLogViewSet(UserLoginCommonMixin, OrgReadonlyModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        qs = qs.filter(username=self.request.user.username)
+        username = self.request.user.username
+        q = Q(username=username) | Q(username__icontains=f'({username})')
+        qs = qs.filter(q)
         return qs
 
 
@@ -187,9 +223,13 @@ class ResourceActivityAPIView(generics.ListAPIView):
             'id', 'datetime', 'r_detail', 'r_detail_id',
             'r_user', 'r_action', 'r_type'
         )
-        org_q = Q(org_id=Organization.SYSTEM_ID) | Q(org_id=current_org.id)
-        if resource_id:
-            org_q |= Q(org_id='') | Q(org_id=Organization.ROOT_ID)
+
+        org_q = Q()
+        if not current_org.is_root():
+            org_q = Q(org_id=Organization.SYSTEM_ID) | Q(org_id=current_org.id)
+            if resource_id:
+                org_q |= Q(org_id='') | Q(org_id=Organization.ROOT_ID)
+
         with tmp_to_root_org():
             qs1 = self.get_operate_log_qs(fields, limit, org_q, resource_id=resource_id)
             qs2 = self.get_activity_log_qs(fields, limit, org_q, resource_id=resource_id)
@@ -290,3 +330,15 @@ class UserSessionViewSet(CommonApiMixin, viewsets.ModelViewSet):
             user_session_manager.remove(key)
         queryset.delete()
         return Response(status=status.HTTP_200_OK)
+
+
+class ServiceAccessLogViewSet(OrgReadonlyModelViewSet):
+    model = IntegrationApplicationLog
+    serializer_class = ServiceAccessLogSerializer
+    extra_filter_backends = [DatetimeRangeFilterBackend]
+    date_range_filter_fields = [
+        ('datetime', ('date_from', 'date_to'))
+    ]
+    filterset_fields = ['account', 'remote_addr', 'service_id']
+    search_fields = filterset_fields
+    ordering = ['-datetime']

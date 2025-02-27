@@ -5,8 +5,8 @@ from contextlib import contextmanager
 from functools import wraps
 from inspect import signature
 
-from werkzeug.local import LocalProxy
 from django.conf import settings
+from werkzeug.local import LocalProxy
 
 from common.local import thread_local
 from .models import Organization
@@ -24,13 +24,13 @@ def get_org_from_request(request):
     # 其次session
     if not oid:
         oid = request.session.get("oid")
-    
+
     if oid and oid.lower() == 'default':
         return Organization.default()
 
     if oid and oid.lower() == 'root':
         return Organization.root()
-    
+
     if oid and oid.lower() == 'system':
         return Organization.system()
 
@@ -39,14 +39,14 @@ def get_org_from_request(request):
     if org and org.internal:
         # 内置组织直接返回
         return org
-    
+
     if not settings.XPACK_ENABLED:
         # 社区版用户只能使用默认组织
         return Organization.default()
-    
+
     if not org and request.user.is_authenticated:
         # 企业版用户优先从自己有权限的组织中获取
-        org = request.user.orgs.first()
+        org = request.user.orgs.exclude(id=Organization.SYSTEM_ID).first()
 
     if not org:
         org = Organization.default()
@@ -57,6 +57,8 @@ def get_org_from_request(request):
 def set_current_org(org):
     if isinstance(org, (str, uuid.UUID)):
         org = Organization.get_instance(org)
+        if not org:
+            return
     setattr(thread_local, 'current_org_id', org.id)
 
 
@@ -97,20 +99,24 @@ def get_current_org_id_for_serializer():
 @contextmanager
 def tmp_to_root_org():
     ori_org = get_current_org()
-    set_to_root_org()
-    yield
-    if ori_org is not None:
-        set_current_org(ori_org)
+    try:
+        set_to_root_org()
+        yield
+    finally:
+        if ori_org is not None:
+            set_current_org(ori_org)
 
 
 @contextmanager
 def tmp_to_org(org):
     ori_org = get_current_org()
-    if org:
-        set_current_org(org)
-    yield
-    if ori_org is not None:
-        set_current_org(ori_org)
+    try:
+        if org:
+            set_current_org(org)
+        yield
+    finally:
+        if ori_org is not None:
+            set_current_org(ori_org)
 
 
 @contextmanager
@@ -122,9 +128,10 @@ def tmp_to_builtin_org(system=0, default=0):
     else:
         raise ValueError("Must set system or default")
     ori_org = get_current_org()
-    set_current_org(org_id)
-    yield
-    if ori_org is not None:
+    try:
+        set_current_org(org_id)
+        yield
+    finally:
         set_current_org(ori_org)
 
 

@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from common.api import JMSModelViewSet
 from common.permissions import IsValidUser, OnlySuperUser
 from .. import serializers
+from ..const import ChatAITypeChoices
 from ..models import ChatPrompt
 from ..prompt import DefaultChatPrompt
 
@@ -40,12 +41,21 @@ class ChatAITestingAPI(GenericAPIView):
                 data={'msg': _('Chat AI is not enabled')}
             )
 
-        proxy = config['GPT_PROXY']
-        model = config['GPT_MODEL']
+        tp = config['CHAT_AI_TYPE']
+        if tp == ChatAITypeChoices.gpt:
+            url = config['GPT_BASE_URL']
+            api_key = config['GPT_API_KEY']
+            proxy = config['GPT_PROXY']
+            model = config['GPT_MODEL']
+        else:
+            url = config['DEEPSEEK_BASE_URL']
+            api_key = config['DEEPSEEK_API_KEY']
+            proxy = config['DEEPSEEK_PROXY']
+            model = config['DEEPSEEK_MODEL']
 
         kwargs = {
-            'base_url': config['GPT_BASE_URL'] or None,
-            'api_key': config['GPT_API_KEY'],
+            'base_url': url or None,
+            'api_key': api_key,
         }
         try:
             if proxy:
@@ -101,6 +111,9 @@ class ChatPromptViewSet(JMSModelViewSet):
     def filter_default_prompts(self):
         lang = self.request.LANGUAGE_CODE
         default_prompts = DefaultChatPrompt.get_prompts(lang)
+        if not default_prompts:
+            return []
+
         search_query = self.request.query_params.get('search')
         search_query = search_query or self.request.query_params.get('name')
         if not search_query:

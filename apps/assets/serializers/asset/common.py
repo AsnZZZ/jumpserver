@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 
-from django.db.models import F
+from django.db.models import F, Count
 from django.db.transaction import atomic
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
@@ -14,11 +14,11 @@ from common.serializers import (
     CommonModelSerializer, MethodSerializer, ResourceLabelsMixin
 )
 from common.serializers.common import DictSerializer
-from common.serializers.fields import LabeledChoiceField
+from common.serializers.fields import LabeledChoiceField, ObjectRelatedField
 from labels.models import Label
 from orgs.mixins.serializers import BulkOrgResourceModelSerializer
 from ...const import Category, AllTypes
-from ...models import Asset, Node, Platform, Protocol
+from ...models import Asset, Node, Platform, Protocol, Host, Device, Database, Cloud, Web, Custom
 
 __all__ = [
     'AssetSerializer', 'AssetSimpleSerializer', 'MiniAssetSerializer',
@@ -30,6 +30,12 @@ __all__ = [
 
 class AssetProtocolsSerializer(serializers.ModelSerializer):
     port = serializers.IntegerField(required=False, allow_null=True, max_value=65535, min_value=0)
+
+    def get_render_help_text(self):
+        if self.parent and self.parent.many:
+            return _('Protocols, format is ["protocol/port"]')
+        else:
+            return _('Protocol, format is name/port')
 
     def to_file_representation(self, data):
         return '{name}/{port}'.format(**data)
@@ -97,6 +103,9 @@ class AssetAccountSerializer(AccountSerializer):
         attrs = super().validate(attrs)
         return self.set_secret(attrs)
 
+    def get_render_help_text(self):
+        return _('Accounts, format [{"name": "x", "username": "x", "secret": "x", "secret_type": "password"}]')
+
     class Meta(AccountSerializer.Meta):
         fields = [
             f for f in AccountSerializer.Meta.fields
@@ -121,25 +130,38 @@ class AccountSecretSerializer(SecretReadableMixin, CommonModelSerializer):
         }
 
 
+class NodeDisplaySerializer(serializers.ListField):
+    def get_render_help_text(self):
+        return _('Node path, format ["/org_name/node_name"], if node not exist, will create it')
+
+    def to_internal_value(self, data):
+        return data
+
+    def to_representation(self, data):
+        return data
+
+
 class AssetSerializer(BulkOrgResourceModelSerializer, ResourceLabelsMixin, WritableNestedModelSerializer):
     category = LabeledChoiceField(choices=Category.choices, read_only=True, label=_('Category'))
     type = LabeledChoiceField(choices=AllTypes.choices(), read_only=True, label=_('Type'))
     protocols = AssetProtocolsSerializer(many=True, required=False, label=_('Protocols'), default=())
     accounts = AssetAccountSerializer(many=True, required=False, allow_null=True, write_only=True, label=_('Accounts'))
-    nodes_display = serializers.ListField(read_only=False, required=False, label=_("Node path"))
+    nodes_display = NodeDisplaySerializer(read_only=False, required=False, label=_("Node path"))
+    platform = ObjectRelatedField(queryset=Platform.objects, required=True, label=_('Platform'), attrs=('id', 'name', 'type'))
+    accounts_amount = serializers.IntegerField(read_only=True, label=_('Accounts amount'))
     _accounts = None
 
     class Meta:
         model = Asset
-        fields_mini = ['id', 'name', 'address']
-        fields_small = fields_mini + ['is_active', 'comment']
         fields_fk = ['domain', 'platform']
+        fields_mini = ['id', 'name', 'address'] + fields_fk
+        fields_small = fields_mini + ['is_active', 'comment']
         fields_m2m = [
             'nodes', 'labels', 'protocols',
             'nodes_display', 'accounts',
         ]
         read_only_fields = [
-            'category', 'type', 'connectivity', 'auto_config',
+            'accounts_amount', 'category', 'type', 'connectivity', 'auto_config',
             'date_verified', 'created_by', 'date_created', 'date_updated',
         ]
         fields = fields_small + fields_fk + fields_m2m + read_only_fields
@@ -207,7 +229,8 @@ class AssetSerializer(BulkOrgResourceModelSerializer, ResourceLabelsMixin, Writa
         queryset = queryset.prefetch_related('domain', 'nodes', 'protocols', ) \
             .prefetch_related('platform', 'platform__automation') \
             .annotate(category=F("platform__category")) \
-            .annotate(type=F("platform__type"))
+            .annotate(type=F("platform__type")) \
+            .annotate(accounts_amount=Count('accounts'))
         if queryset.model is Asset:
             queryset = queryset.prefetch_related('labels__label', 'labels')
         else:
@@ -288,6 +311,17 @@ class AssetSerializer(BulkOrgResourceModelSerializer, ResourceLabelsMixin, Writa
                 'protocols': _("Protocol is required: {}").format(', '.join(protocols_not_found))
             })
         return protocols_data_map.values()
+
+    def validate_platform(self, platform_data):
+        check_models = {Host, Device, Database, Cloud, Web, Custom}
+        if self.Meta.model not in check_models:
+            return platform_data
+        model_name = self.Meta.model.__name__.lower()
+        if model_name != platform_data.category:
+            raise serializers.ValidationError({
+                'platform': f"Platform does not match: {platform_data.name}"
+            })
+        return platform_data
 
     @staticmethod
     def update_account_su_from(accounts, include_su_from_accounts):

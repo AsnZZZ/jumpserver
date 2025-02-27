@@ -7,9 +7,12 @@ from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.db import models
 from django.db.utils import ProgrammingError, OperationalError
 from django.utils.translation import gettext_lazy as _
+from rest_framework.utils.encoders import JSONEncoder
 
 from common.db.models import JMSBaseModel
-from common.utils import signer, get_logger
+from common.db.utils import Encryptor
+from common.utils import get_logger
+from .const import ChatAITypeChoices
 from .signals import setting_changed
 
 logger = get_logger(__name__)
@@ -52,7 +55,7 @@ class Setting(models.Model):
         try:
             value = self.value
             if self.encrypted:
-                value = signer.unsign(value)
+                value = Encryptor(value).decrypt()
             if not value:
                 return None
             value = json.loads(value)
@@ -63,9 +66,9 @@ class Setting(models.Model):
     @cleaned_value.setter
     def cleaned_value(self, item):
         try:
-            v = json.dumps(item)
+            v = json.dumps(item, cls=JSONEncoder)
             if self.encrypted:
-                v = signer.sign(v)
+                v = Encryptor(v).encrypt()
             self.value = v
         except json.JSONDecodeError as e:
             raise ValueError("Json dump error: {}".format(str(e)))
@@ -189,3 +192,19 @@ class ChatPrompt(JMSBaseModel):
 
     def __str__(self):
         return self.name
+
+
+def get_chatai_data():
+    data = {
+        'url': settings.GPT_BASE_URL,
+        'api_key': settings.GPT_API_KEY,
+        'proxy': settings.GPT_PROXY,
+        'model': settings.GPT_MODEL,
+    }
+    if settings.CHAT_AI_TYPE != ChatAITypeChoices.gpt:
+        data['url'] = settings.DEEPSEEK_BASE_URL
+        data['api_key'] = settings.DEEPSEEK_API_KEY
+        data['proxy'] = settings.DEEPSEEK_PROXY
+        data['model'] = settings.DEEPSEEK_MODEL
+
+    return data

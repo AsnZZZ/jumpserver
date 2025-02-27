@@ -13,17 +13,27 @@ from common.utils.random import random_string
 logger = get_logger(__file__)
 
 
-@shared_task(verbose_name=_('Send SMS code'))
-def send_sms_async(target, code):
-    SMS().send_verify_code(target, code)
+@shared_task(
+    verbose_name=_('Send SMS code'),
+    description=_(
+        """When resetting a password, forgetting a password, or verifying MFA, this task needs to 
+        be executed to send SMS messages"""
+    )
+)
+def send_sms_async(target, code, user_info):
+    SMS().send_verify_code(target, code, user_info=user_info)
 
 
 class SendAndVerifyCodeUtil(object):
     KEY_TMPL = 'auth-verify-code-{}'
 
-    def __init__(self, target, code=None, key=None, backend='email', timeout=None, **kwargs):
+    def __init__(
+            self, target, code=None, key=None, backend='email',
+            user_info=None, timeout=None, **kwargs
+    ):
         self.code = code
         self.target = target
+        self.user_info = user_info
         self.backend = backend
         self.key = key or self.KEY_TMPL.format(target)
         self.timeout = settings.VERIFY_CODE_TTL if timeout is None else timeout
@@ -72,7 +82,7 @@ class SendAndVerifyCodeUtil(object):
         return code
 
     def __send_with_sms(self):
-        send_sms_async.apply_async(args=(self.target, self.code), priority=100)
+        send_sms_async.apply_async(args=(self.target, self.code, self.user_info), priority=100)
 
     def __send_with_email(self):
         subject = self.other_args.get('subject', '')

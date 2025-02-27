@@ -9,31 +9,20 @@
         database: passwd
         key: "{{ account.username }}"
       register: user_info
-      ignore_errors: yes  # 忽略错误，如果用户不存在时不会导致playbook失败
+      failed_when: false
+      changed_when: false
 
     - name: "Add {{ account.username }} user"
       ansible.builtin.user:
         name: "{{ account.username }}"
-        shell: "{{ params.shell }}"
-        home: "{{ params.home | default('/home/' + account.username, true) }}"
-        groups: "{{ params.groups }}"
+        uid: "{{ params.uid | int if params.uid | length > 0 else omit }}"
+        shell: "{{ params.shell if params.shell | length > 0 else omit }}"
+        home: "{{ params.home if params.home | length > 0 else '/home/' + account.username }}"
+        groups: "{{ params.groups if params.groups | length > 0 else omit }}"
+        append: "{{ true if params.groups | length > 0 else false }}"
         expires: -1
         state: present
-      when: user_info.failed
-
-    - name: "Add {{ account.username }} group"
-      ansible.builtin.group:
-        name: "{{ account.username }}"
-        state: present
-      when: user_info.failed
-
-    - name: "Add {{ account.username }} user to group"
-      ansible.builtin.user:
-        name: "{{ account.username }}"
-        groups: "{{ params.groups }}"
-      when:
-        - user_info.failed
-        - params.groups
+      when: user_info.msg is defined
 
     - name: "Set {{ account.username }} sudo setting"
       ansible.builtin.lineinfile:
@@ -43,7 +32,7 @@
         line: "{{ account.username + ' ALL=(ALL) NOPASSWD: ' + params.sudo }}"
         validate: visudo -cf %s
       when:
-        - user_info.failed or params.modify_sudo
+        - user_info.msg is defined or params.modify_sudo
         - params.sudo
 
     - name: "Change {{ account.username }} password"
@@ -54,14 +43,40 @@
       ignore_errors: true
       when: account.secret_type == "password"
 
-    - name: remove jumpserver ssh key
+    - name: "Get home directory for {{ account.username }}"
+      ansible.builtin.shell: "getent passwd {{ account.username }} | cut -d: -f6"
+      register: home_dir
+      when: account.secret_type == "ssh_key"
+      ignore_errors: yes
+
+    - name: "Check if home directory exists for {{ account.username }}"
+      ansible.builtin.stat:
+        path: "{{ home_dir.stdout.strip() }}"
+      register: home_dir_stat
+      when: account.secret_type == "ssh_key"
+      ignore_errors: yes
+
+    - name: "Ensure {{ account.username }} home directory exists"
+      ansible.builtin.file:
+        path: "{{ home_dir.stdout.strip() }}"
+        state: directory
+        owner: "{{ account.username }}"
+        group: "{{ account.username }}"
+        mode: '0750'
+      when:
+        - account.secret_type == "ssh_key"
+        - home_dir_stat.stat.exists == false
+      ignore_errors: yes
+
+    - name: Remove jumpserver ssh key
       ansible.builtin.lineinfile:
-        dest: "{{ ssh_params.dest }}"
+        dest: "{{ home_dir.stdout.strip() }}/.ssh/authorized_keys"
         regexp: "{{ ssh_params.regexp }}"
         state: absent
       when:
         - account.secret_type == "ssh_key"
         - ssh_params.strategy == "set_jms"
+      ignore_errors: yes
 
     - name: "Change {{ account.username }} SSH key"
       ansible.builtin.authorized_key:
@@ -79,14 +94,14 @@
         login_password: "{{ account.secret }}"
         login_host: "{{ jms_asset.address }}"
         login_port: "{{ jms_asset.port }}"
-        gateway_args: "{{ jms_asset.ansible_ssh_common_args | default('') }}"
+        gateway_args: "{{ jms_asset.ansible_ssh_common_args | default(None) }}"
         become: "{{ account.become.ansible_become | default(False) }}"
         become_method: su
         become_user: "{{ account.become.ansible_user | default('') }}"
         become_password: "{{ account.become.ansible_password | default('') }}"
         become_private_key_path: "{{ account.become.ansible_ssh_private_key_file | default(None) }}"
         old_ssh_version: "{{ jms_asset.old_ssh_version | default(False) }}"
-      when: account.secret_type == "password"
+      when: account.secret_type == "password" and check_conn_after_change
       delegate_to: localhost
 
     - name: "Verify {{ account.username }} SSH KEY (paramiko)"
@@ -95,7 +110,7 @@
         login_port: "{{ jms_asset.port }}"
         login_user: "{{ account.username }}"
         login_private_key_path: "{{ account.private_key_path  }}"
-        gateway_args: "{{ jms_asset.ansible_ssh_common_args | default('') }}"
+        gateway_args: "{{ jms_asset.ansible_ssh_common_args | default(None) }}"
         old_ssh_version: "{{ jms_asset.old_ssh_version | default(False) }}"
-      when: account.secret_type == "ssh_key"
+      when: account.secret_type == "ssh_key" and check_conn_after_change
       delegate_to: localhost

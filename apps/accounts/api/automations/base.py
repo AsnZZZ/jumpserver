@@ -1,6 +1,9 @@
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext_lazy as _
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from rest_framework import status, mixins, viewsets
+from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from accounts.models import AutomationExecution
@@ -98,7 +101,6 @@ class AutomationExecutionViewSet(
     search_fields = ('trigger', 'automation__name')
     filterset_fields = ('trigger', 'automation_id', 'automation__name')
     serializer_class = serializers.AutomationExecutionSerializer
-
     tp: str
 
     def get_queryset(self):
@@ -113,3 +115,10 @@ class AutomationExecutionViewSet(
             pid=str(automation.pk), trigger=Trigger.manual, tp=self.tp
         )
         return Response({'task': task.id}, status=status.HTTP_201_CREATED)
+
+    @xframe_options_sameorigin
+    @action(methods=['get'], detail=True, url_path='report')
+    def report(self, request, *args, **kwargs):
+        execution = self.get_object()
+        report = execution.manager.gen_report()
+        return HttpResponse(report)

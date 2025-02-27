@@ -35,6 +35,9 @@ class NativeClient(TextChoices):
     # Razor
     mstsc = 'mstsc', _('Remote Desktop')
     rdp_guide = 'rdp_guide', _('RDP Guide')
+    # NEC
+    vnc_client = 'vnc_client', _('VNC Client')
+    vnc_guide = 'vnc_guide', _('VNC Guide')
 
     @classmethod
     def get_native_clients(cls):
@@ -51,6 +54,7 @@ class NativeClient(TextChoices):
             Protocol.oracle: [cls.db_client, cls.db_guide],
             Protocol.postgresql: [cls.db_client, cls.db_guide],
             Protocol.sqlserver: [cls.db_client, cls.db_guide],
+            Protocol.vnc: [cls.vnc_guide,]
         }
         return clients
 
@@ -102,6 +106,8 @@ class AppletMethod:
 
         methods = defaultdict(list)
         has_applet_hosts = AppletHost.objects.filter(is_active=True).exists()
+        if not has_applet_hosts:
+            return methods
         applets = Applet.objects.filter(is_active=True)
         for applet in applets:
             for protocol in applet.protocols:
@@ -110,7 +116,7 @@ class AppletMethod:
                     'label': applet.display_name,
                     'type': 'applet',
                     'icon': applet.icon,
-                    'disabled': not applet.is_active or not has_applet_hosts,
+                    'disabled': not applet.is_active,
                 })
         return methods
 
@@ -199,6 +205,12 @@ class ConnectMethodUtil:
                 'listen': [Protocol.http],
                 'support': [Protocol.chatgpt],
                 'match': 'm2m'
+            },
+            TerminalType.nec: {
+                'web_methods': [],
+                'listen': [Protocol.vnc],
+                'support': [Protocol.vnc],
+                'match': 'map'
             }
         }
         return protocols

@@ -10,7 +10,6 @@ from common.utils import get_object_or_none
 from orgs.utils import tmp_to_root_org
 from users.notifications import (
     ResetPasswordMsg, ResetPasswordSuccessMsg, ResetSSHKeyMsg,
-    ResetPublicKeySuccessMsg,
 )
 from .mixins import UserQuerysetMixin
 from .. import serializers
@@ -18,8 +17,7 @@ from ..models import User
 
 __all__ = [
     'UserResetPasswordApi', 'UserResetPKApi',
-    'UserProfileApi', 'UserPasswordApi',
-    'UserPublicKeyApi'
+    'UserProfileApi', 'UserPasswordApi'
 ]
 
 
@@ -79,15 +77,3 @@ class UserPasswordApi(generics.RetrieveUpdateAPIView):
         resp = super().update(request, *args, **kwargs)
         ResetPasswordSuccessMsg(self.request.user, request).publish_async()
         return resp
-
-
-class UserPublicKeyApi(generics.RetrieveUpdateAPIView):
-    permission_classes = (IsAuthenticated,)
-    serializer_class = serializers.UserUpdatePublicKeySerializer
-
-    def get_object(self):
-        return self.request.user
-
-    def perform_update(self, serializer):
-        super().perform_update(serializer)
-        ResetPublicKeySuccessMsg(self.get_object(), self.request).publish_async()

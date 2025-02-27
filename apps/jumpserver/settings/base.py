@@ -83,9 +83,9 @@ if DEBUG:
 DEBUG_HOST_PORTS = ['{}:{}'.format(host, port) for host in DEBUG_HOSTS for port in DEBUG_PORT]
 ALLOWED_DOMAINS.extend(DEBUG_HOST_PORTS)
 
-print("ALLOWED_HOSTS: ", )
-for host in ALLOWED_DOMAINS:
-    print('  - ' + host.lstrip('.'))
+# print("ALLOWED_HOSTS: ", )
+# for host in ALLOWED_DOMAINS:
+#     print('  - ' + host.lstrip('.'))
 
 ALLOWED_HOSTS = ['*']
 
@@ -227,6 +227,7 @@ SESSION_COOKIE_NAME = '{}sessionid'.format(SESSION_COOKIE_NAME_PREFIX)
 SESSION_COOKIE_AGE = CONFIG.SESSION_COOKIE_AGE
 SESSION_SAVE_EVERY_REQUEST = CONFIG.SESSION_SAVE_EVERY_REQUEST
 SESSION_EXPIRE_AT_BROWSER_CLOSE = CONFIG.SESSION_EXPIRE_AT_BROWSER_CLOSE
+VIEW_ASSET_ONLINE_SESSION_INFO = CONFIG.VIEW_ASSET_ONLINE_SESSION_INFO
 SESSION_ENGINE = "common.sessions.{}".format(CONFIG.SESSION_ENGINE)
 
 MESSAGE_STORAGE = 'django.contrib.messages.storage.cookie.CookieStorage'

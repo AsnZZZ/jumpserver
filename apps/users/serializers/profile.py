@@ -13,6 +13,7 @@ class UserOrgSerializer(serializers.Serializer):
     name = serializers.CharField()
     is_default = serializers.BooleanField(read_only=True)
     is_root = serializers.BooleanField(read_only=True)
+    is_system = serializers.BooleanField(read_only=True)
 
 
 class UserUpdatePasswordSerializer(serializers.ModelSerializer):
@@ -52,33 +53,6 @@ class UserUpdatePasswordSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         new_password = self.validated_data.get('new_password')
         instance.reset_password(new_password)
-        return instance
-
-
-class UserUpdatePublicKeySerializer(serializers.ModelSerializer):
-    public_key_comment = serializers.CharField(
-        source='get_public_key_comment', required=False, read_only=True, max_length=128
-    )
-    public_key_hash_md5 = serializers.CharField(
-        source='get_public_key_hash_md5', required=False, read_only=True, max_length=128
-    )
-
-    class Meta:
-        model = User
-        fields = ['public_key_comment', 'public_key_hash_md5', 'public_key']
-        extra_kwargs = {
-            'public_key': {'required': True, 'write_only': True, 'max_length': 2048}
-        }
-
-    @staticmethod
-    def validate_public_key(value):
-        if not validate_ssh_public_key(value):
-            raise serializers.ValidationError(_('Not a valid ssh public key'))
-        return value
-
-    def update(self, instance, validated_data):
-        new_public_key = self.validated_data.get('public_key')
-        instance.set_public_key(new_public_key)
         return instance
 
 

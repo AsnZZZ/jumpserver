@@ -11,8 +11,8 @@ class BaseTranslateManager:
     SEPARATOR = "<SEP>"
     LANG_MAPPER = {
         'ja': 'Japanese',
-        'zh_hant': 'Taiwan',
-        # 'en': 'English',
+        'zh_Hant': 'Traditional Chinese',
+        'pt_BR': 'Portuguese (Brazil)',
     }
 
     def __init__(self, dir_path, oai_trans_instance):
@@ -41,7 +41,7 @@ class BaseTranslateManager:
             values = list(data.values())
             combined_text = self.SEPARATOR.join(values)
             translated_text = await self.oai_trans.translate_text(combined_text, target_lang)
-            translated_texts = translated_text.split(self.SEPARATOR)
+            translated_texts = [i.strip() for i in translated_text.split(self.SEPARATOR)]
             return dict(zip(keys, translated_texts))
         except Exception as e:
             print(f"{RED}Error during translation task: {e}{RED}")

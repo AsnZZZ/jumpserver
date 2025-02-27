@@ -8,6 +8,7 @@ GATEWAY_NAME = 'Gateway'
 class HostTypes(BaseType):
     LINUX = 'linux', 'Linux'
     WINDOWS = 'windows', 'Windows'
+    MacOS = 'macos', 'macOS'
     UNIX = 'unix', 'Unix'
     OTHER_HOST = 'other', _("Other")
 
@@ -19,7 +20,7 @@ class HostTypes(BaseType):
                 'charset': 'utf-8',  # default
                 'domain_enabled': True,
                 'su_enabled': True,
-                'su_methods': ['sudo', 'su'],
+                'su_methods': ['sudo', 'su', 'only_sudo', 'only_su'],
             },
             cls.WINDOWS: {
                 'su_enabled': False,

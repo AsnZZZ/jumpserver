@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 #
-
 from django.shortcuts import get_object_or_404
 from django.utils.translation import gettext as _
 from rest_framework import exceptions
@@ -20,7 +19,7 @@ from ..mixins import AuthMixin
 logger = get_logger(__name__)
 
 __all__ = [
-    'MFAChallengeVerifyApi', 'MFASendCodeApi'
+    'MFAChallengeVerifyApi', 'MFASendCodeApi',
 ]
 
 

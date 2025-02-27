@@ -18,9 +18,9 @@ from common.utils import (
     lazyproperty,
 )
 from users.signals import post_user_change_password
+from users.exceptions import CreateSSHKeyExceedLimit
 
 logger = get_logger(__file__)
-
 
 __all__ = ['MFAMixin', 'AuthMixin']
 
@@ -134,11 +134,14 @@ class AuthMixin:
                 post_user_change_password.send(self.__class__, user=self)
             super().set_password(raw_password)  # noqa
 
-    def set_public_key(self, public_key):
+    def set_ssh_key(self, name, public_key, private_key):
         if self.can_update_ssh_key():
-            self.public_key = public_key
-            self.save()
+            from authentication.models import SSHKey
+            SSHKey.objects.create(name=name, public_key=public_key, private_key=private_key, user=self)
             post_user_change_password.send(self.__class__, user=self)
+
+    def can_create_ssh_key(self):
+        return self.ssh_keys.count() < settings.TERMINAL_SSH_KEY_LIMIT_COUNT
 
     def can_update_password(self):
         return self.is_local
@@ -167,7 +170,7 @@ class AuthMixin:
         Check if the user's ssh public key is valid.
         This function is used in base.html.
         """
-        if self.public_key:
+        if self.user_ssh_keys:
             return True
         return False
 
@@ -225,6 +228,22 @@ class AuthMixin:
             return True
         return False
 
+    def check_need_update_password(self):
+        if self.is_local and self.need_update_password:
+            return True
+        return False
+
+    @staticmethod
+    def check_passwd_too_simple(password):
+        simple_passwords = ['admin', 'ChangeMe']
+        if password in simple_passwords:
+            return True
+        return False
+
+    def is_auth_backend_model(self):
+        backend = getattr(self, 'backend', None)
+        return backend == settings.AUTH_BACKEND_MODEL
+
     @staticmethod
     def get_public_key_md5(key):
         try:
@@ -233,14 +252,21 @@ class AuthMixin:
         except Exception as e:
             return ""
 
+    @property
+    def user_ssh_keys(self):
+        return self.ssh_keys.filter(is_active=True).all()
+
     def check_public_key(self, key):
-        if not self.public_key:
-            return False
         key_md5 = self.get_public_key_md5(key)
         if not key_md5:
             return False
-        self_key_md5 = self.get_public_key_md5(self.public_key)
-        return key_md5 == self_key_md5
+        for ssh_key in self.user_ssh_keys:
+            self_key_md5 = self.get_public_key_md5(ssh_key.public_key)
+            if key_md5 == self_key_md5:
+                ssh_key.date_last_used = timezone.now()
+                ssh_key.save(update_fields=['date_last_used'])
+                return True
+        return False
 
     def cache_login_password_if_need(self, password):
         from common.utils import signer
@@ -270,4 +296,3 @@ class AuthMixin:
             return ""
         password = signer.unsign(secret)
         return password
-

@@ -5,10 +5,11 @@ from django.core.cache import cache
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from common.const.signals import SKIP_SIGNAL
+from common.const.signals import OP_LOG_SKIP_SIGNAL
 from common.db.models import JMSBaseModel
 from common.utils import get_logger, lazyproperty
 from orgs.utils import tmp_to_root_org
+from settings.models import get_chatai_data
 from terminal.const import TerminalType as TypeChoices
 from users.models import User
 from .status import Status
@@ -120,11 +121,20 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
 
     @staticmethod
     def get_chat_ai_setting():
+        data = get_chatai_data()
         return {
-            'GPT_BASE_URL': settings.GPT_BASE_URL,
-            'GPT_API_KEY': settings.GPT_API_KEY,
-            'GPT_PROXY': settings.GPT_PROXY,
-            'GPT_MODEL': settings.GPT_MODEL,
+            'GPT_BASE_URL': data['url'],
+            'GPT_API_KEY': data['api_key'],
+            'GPT_PROXY': data['proxy'],
+            'GPT_MODEL': data['model'],
+            'CHAT_AI_TYPE': settings.CHAT_AI_TYPE,
+        }
+
+    @staticmethod
+    def get_xpack_license():
+        return {
+            'XPACK_LICENSE_IS_VALID': settings.XPACK_LICENSE_IS_VALID,
+            'XPACK_LICENSE_CONTENT': settings.XPACK_LICENSE_CONTENT
         }
 
     @property
@@ -138,6 +148,7 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
         configs.update(self.get_replay_storage_setting())
         configs.update(self.get_login_title_setting())
         configs.update(self.get_chat_ai_setting())
+        configs.update(self.get_xpack_license())
         configs.update({
             'SECURITY_MAX_IDLE_TIME': settings.SECURITY_MAX_IDLE_TIME,
             'SECURITY_SESSION_SHARE': settings.SECURITY_SESSION_SHARE,
@@ -152,13 +163,12 @@ class Terminal(StorageMixin, TerminalStatusMixin, JMSBaseModel):
 
     def delete(self, using=None, keep_parents=False):
         if self.user:
-            setattr(self.user, SKIP_SIGNAL, True)
+            setattr(self.user, OP_LOG_SKIP_SIGNAL, True)
             self.user.delete()
         self.name = self.name + '_' + uuid.uuid4().hex[:8]
         self.user = None
         self.is_deleted = True
         self.save()
-        return
 
     def __str__(self):
         status = "Active"

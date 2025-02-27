@@ -24,19 +24,21 @@ from common.utils.http import is_true, is_false
 from orgs.mixins.api import RootOrgViewMixin
 from orgs.utils import tmp_to_org
 from perms.models import ActionChoices
-from terminal.connect_methods import NativeClient, ConnectMethodUtil
+from terminal.connect_methods import NativeClient, ConnectMethodUtil, WebMethod
 from terminal.models import EndpointRule, Endpoint
 from users.const import FileNameConflictResolution
 from users.const import RDPSmartSize, RDPColorQuality
 from users.models import Preference
-from ..models import ConnectionToken, date_expired_default
+from ..models import ConnectionToken, AdminConnectionToken, date_expired_default
+from .face import FaceMonitorContext
+from ..mixins import AuthFaceMixin
 from ..serializers import (
     ConnectionTokenSerializer, ConnectionTokenSecretSerializer,
     SuperConnectionTokenSerializer, ConnectTokenAppletOptionSerializer,
     ConnectionTokenReusableSerializer, ConnectTokenVirtualAppOptionSerializer
 )
 
-__all__ = ['ConnectionTokenViewSet', 'SuperConnectionTokenViewSet']
+__all__ = ['ConnectionTokenViewSet', 'SuperConnectionTokenViewSet', 'AdminConnectionTokenViewSet']
 logger = get_logger(__name__)
 
 
@@ -67,6 +69,36 @@ class RDPFileClientProtocolURLMixin:
             'bookmarktype:i': '3',
             'use redirection server name:i': '0',
         }
+
+        # copy from
+        # https://learn.microsoft.com/zh-cn/windows-server/administration/performance-tuning/role/remote-desktop/session-hosts
+        rdp_low_speed_broadband_option = {
+            "connection type:i": 2,
+            "disable wallpaper:i": 1,
+            "bitmapcachepersistenable:i": 1,
+            "disable full window drag:i": 1,
+            "disable menu anims:i": 1,
+            "allow font smoothing:i": 0,
+            "allow desktop composition:i": 0,
+            "disable themes:i": 0
+        }
+
+        rdp_high_speed_broadband_option = {
+            "connection type:i": 4,
+            "disable wallpaper:i": 0,
+            "bitmapcachepersistenable:i": 1,
+            "disable full window drag:i": 1,
+            "disable menu anims:i": 0,
+            "allow font smoothing:i": 0,
+            "allow desktop composition:i": 1,
+            "disable themes:i": 0
+        }
+
+        RDP_CONNECTION_SPEED_OPTION_MAP = {
+            "auto": {},
+            "low_speed_broadband": rdp_low_speed_broadband_option,
+            "high_speed_broadband": rdp_high_speed_broadband_option,
+        }
         # 设置多屏显示
         multi_mon = is_true(self.request.query_params.get('multi_mon'))
         if multi_mon:
@@ -91,13 +123,15 @@ class RDPFileClientProtocolURLMixin:
         # rdp_options['domain:s'] = token.account_ad_domain
 
         # 设置宽高
-        height = self.request.query_params.get('height')
-        width = self.request.query_params.get('width')
-        if width and height:
-            rdp_options['desktopwidth:i'] = width
-            rdp_options['desktopheight:i'] = height
-            rdp_options['winposstr:s'] = f'0,1,0,0,{width},{height}'
-            rdp_options['dynamic resolution:i'] = '0'
+
+        resolution_value = token.connect_options.get('resolution', 'auto')
+        if resolution_value != 'auto':
+            width, height = resolution_value.split('x')
+            if width and height:
+                rdp_options['desktopwidth:i'] = width
+                rdp_options['desktopheight:i'] = height
+                rdp_options['winposstr:s'] = f'0,1,0,0,{width},{height}'
+                rdp_options['dynamic resolution:i'] = '0'
 
         color_quality = self.request.query_params.get('rdp_color_quality')
         color_quality = color_quality if color_quality else os.getenv('JUMPSERVER_COLOR_DEPTH', RDPColorQuality.HIGH)
@@ -115,6 +149,8 @@ class RDPFileClientProtocolURLMixin:
         rdp = token.asset.platform.protocols.filter(name='rdp').first()
         if rdp and rdp.setting.get('console'):
             rdp_options['administrative session:i'] = '1'
+        rdp_connection_speed = token.connect_options.get('rdp_connection_speed', 'auto')
+        rdp_options.update(RDP_CONNECTION_SPEED_OPTION_MAP.get(rdp_connection_speed, {}))
 
         # 文件名
         name = token.asset.name
@@ -221,6 +257,8 @@ class ExtraActionApiMixin(RDPFileClientProtocolURLMixin):
     get_serializer: callable
     perform_create: callable
     validate_exchange_token: callable
+    need_face_verify: bool
+    create_face_verify: callable
 
     @action(methods=['POST', 'GET'], detail=True, url_path='rdp-file')
     def get_rdp_file(self, request, *args, **kwargs):
@@ -280,10 +318,13 @@ class ExtraActionApiMixin(RDPFileClientProtocolURLMixin):
         instance.date_expired = date_expired_default()
         instance.save()
         serializer = self.get_serializer(instance)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        response = Response(serializer.data, status=status.HTTP_201_CREATED)
+        if self.need_face_verify:
+            self.create_face_verify(response)
+        return response
 
 
-class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelViewSet):
+class ConnectionTokenViewSet(AuthFaceMixin, ExtraActionApiMixin, RootOrgViewMixin, JMSModelViewSet):
     filterset_fields = (
         'user_display', 'asset_display'
     )
@@ -304,6 +345,8 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
         'get_client_protocol_url': 'authentication.add_connectiontoken',
     }
     input_username = ''
+    need_face_verify = False
+    face_monitor_token = ''
 
     def get_queryset(self):
         queryset = ConnectionToken.objects \
@@ -355,8 +398,9 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
         asset = data.get('asset')
         account_name = data.get('account')
         protocol = data.get('protocol')
+        connect_method = data.get('connect_method')
         self.input_username = self.get_input_username(data)
-        _data = self._validate(user, asset, account_name, protocol)
+        _data = self._validate(user, asset, account_name, protocol, connect_method)
         data.update(_data)
         return serializer
 
@@ -364,12 +408,12 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
         user = token.user
         asset = token.asset
         account_name = token.account
-        _data = self._validate(user, asset, account_name, token.protocol)
+        _data = self._validate(user, asset, account_name, token.protocol, token.connect_method)
         for k, v in _data.items():
             setattr(token, k, v)
         return token
 
-    def _validate(self, user, asset, account_name, protocol):
+    def _validate(self, user, asset, account_name, protocol, connect_method):
         data = dict()
         data['org_id'] = asset.org_id
         data['user'] = user
@@ -385,10 +429,16 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
         if account.username != AliasAccount.INPUT:
             data['input_username'] = ''
 
-        ticket = self._validate_acl(user, asset, account)
+        ticket = self._validate_acl(user, asset, account, connect_method)
         if ticket:
             data['from_ticket'] = ticket
+
+        if ticket or self.need_face_verify:
             data['is_active'] = False
+        if self.face_monitor_token:
+            FaceMonitorContext.get_or_create_context(self.face_monitor_token,
+                                                     self.request.user.id)
+            data['face_monitor_token'] = self.face_monitor_token
         return data
 
     @staticmethod
@@ -417,7 +467,7 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
                 after=after, object_name=object_name
             )
 
-    def _validate_acl(self, user, asset, account):
+    def _validate_acl(self, user, asset, account, connect_method):
         from acls.models import LoginAssetACL
         kwargs = {'user': user, 'asset': asset, 'account': account}
         if account.username == AliasAccount.INPUT:
@@ -444,6 +494,26 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
                 assignees=acl.reviewers.all(), org_id=asset.org_id
             )
             return ticket
+        if acl.is_action(acl.ActionChoices.face_verify):
+            if not self.request.query_params.get('face_verify'):
+                msg = _('ACL action is face verify')
+                raise JMSException(code='acl_face_verify', detail=msg)
+            self.need_face_verify = True
+        if acl.is_action(acl.ActionChoices.face_online):
+            if connect_method not in [WebMethod.web_cli, WebMethod.web_gui]:
+                msg = _('ACL action not supported for this asset')
+                raise JMSException(detail=msg, code='acl_face_online_not_supported')
+
+            face_verify = self.request.query_params.get('face_verify')
+            face_monitor_token = self.request.query_params.get('face_monitor_token')
+
+            if not face_verify or not face_monitor_token:
+                msg = _('ACL action is face online')
+                raise JMSException(code='acl_face_online', detail=msg)
+
+            self.need_face_verify = True
+            self.face_monitor_token = face_monitor_token
+
         if acl.is_action(acl.ActionChoices.notice):
             reviewers = acl.reviewers.all()
             if not reviewers:
@@ -455,9 +525,22 @@ class ConnectionTokenViewSet(ExtraActionApiMixin, RootOrgViewMixin, JMSModelView
                     reviewer, asset, user, account, self.input_username
                 ).publish_async()
 
+    def create_face_verify(self, response):
+        if not self.request.user.face_vector:
+            raise JMSException(code='no_face_feature', detail=_('No available face feature'))
+        connection_token_id = response.data.get('id')
+        context_data = {
+            "action": "login_asset",
+            "connection_token_id": connection_token_id,
+        }
+        face_verify_token = self.create_face_verify_context(context_data)
+        response.data['face_token'] = face_verify_token
+
     def create(self, request, *args, **kwargs):
         try:
             response = super().create(request, *args, **kwargs)
+            if self.need_face_verify:
+                self.create_face_verify(response)
         except JMSException as e:
             data = {'code': e.detail.code, 'detail': e.detail}
             return Response(data, status=e.status_code)
@@ -472,6 +555,7 @@ class SuperConnectionTokenViewSet(ConnectionTokenViewSet):
     rbac_perms = {
         'create': 'authentication.add_superconnectiontoken',
         'renewal': 'authentication.add_superconnectiontoken',
+        'check': 'authentication.view_superconnectiontoken',
         'get_secret_detail': 'authentication.view_superconnectiontokensecret',
         'get_applet_info': 'authentication.view_superconnectiontoken',
         'release_applet_account': 'authentication.view_superconnectiontoken',
@@ -483,6 +567,28 @@ class SuperConnectionTokenViewSet(ConnectionTokenViewSet):
 
     def get_user(self, serializer):
         return serializer.validated_data.get('user')
+
+    @action(methods=['GET'], detail=True, url_path='check')
+    def check(self, request, *args, **kwargs):
+        instance = self.get_object()
+        data = {
+            "detail": "OK",
+            "code": "perm_ok",
+            "expired": instance.is_expired
+        }
+        try:
+            self._validate_perm(
+                instance.user,
+                instance.asset,
+                instance.account,
+                instance.protocol
+            )
+        except JMSException as e:
+            data['code'] = e.detail.code
+            data['detail'] = str(e.detail)
+            return Response(data=data, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(data=data, status=status.HTTP_200_OK)
 
     @action(methods=['PATCH'], detail=False)
     def renewal(self, request, *args, **kwargs):
@@ -558,3 +664,14 @@ class SuperConnectionTokenViewSet(ConnectionTokenViewSet):
         else:
             logger.error('Release applet account error: {}'.format(lock_key))
             return Response({'error': 'not found or expired'}, status=400)
+
+
+class AdminConnectionTokenViewSet(ConnectionTokenViewSet):
+
+    def check_permissions(self, request):
+        user = request.user
+        if not user.is_superuser:
+            self.permission_denied(request)
+
+    def get_queryset(self):
+        return AdminConnectionToken.objects.all()

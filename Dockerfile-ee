@@ -1,4 +1,4 @@
-ARG VERSION
+ARG VERSION=dev
 
 FROM registry.fit2cloud.com/jumpserver/xpack:${VERSION} AS build-xpack
 FROM jumpserver/core:${VERSION}-ce
@@ -15,24 +15,20 @@ ARG TOOLS="                           \
         vim                           \
         wget"
 
-ARG APT_MIRROR=http://deb.debian.org
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=core \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=core \
-    set -ex \
-    && rm -f /etc/apt/apt.conf.d/docker-clean \
-    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
-    && sed -i "s@http://.*.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list \
+RUN set -ex \
     && apt-get update \
     && apt-get -y install --no-install-recommends ${TOOLS} \
-    && echo "no" | dpkg-reconfigure dash
+    && apt-get clean all \
+    && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /opt/jumpserver
 
 ARG PIP_MIRROR=https://pypi.org/simple
-RUN --mount=type=cache,target=/root/.cache,sharing=locked,id=core \
-    --mount=type=bind,source=poetry.lock,target=/opt/jumpserver/poetry.lock \
-    --mount=type=bind,source=pyproject.toml,target=/opt/jumpserver/pyproject.toml \
-    set -ex \
-    . /opt/py3/bin/activate \
-    && pip install poetry -i ${PIP_MIRROR} \
-    && poetry install --only xpack
+ENV POETRY_PYPI_MIRROR_URL=${PIP_MIRROR}
+COPY poetry.lock pyproject.toml ./
+RUN set -ex \
+    && . /opt/py3/bin/activate \
+    && pip install poetry poetry-plugin-pypi-mirror -i ${PIP_MIRROR} \
+    && poetry install --only xpack \
+    && poetry cache clear pypi --all
 

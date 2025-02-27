@@ -23,6 +23,7 @@ class CeleryTask(models.Model):
         task = app.tasks.get(self.name, None)
         return {
             "comment": getattr(task, 'verbose_name', None),
+            "description": getattr(task, 'description', None),
             "queue": getattr(task, 'queue', 'default')
         }
 
@@ -103,6 +104,17 @@ class CeleryTaskExecution(models.Model):
     @property
     def is_success(self):
         return self.state == 'SUCCESS'
+
+    def set_creator_if_need(self):
+        from ops.models import Job
+        if self.creator:
+            return
+        if self.name == 'ops.tasks.run_ops_job' and self.args:
+            job_id = self.args[0]
+            job = Job.objects.filter(id=job_id).first()
+            if job:
+                self.creator = job.creator
+        self.save()
 
     def __str__(self):
         return "{}: {}".format(self.name, self.id)

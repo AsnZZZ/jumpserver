@@ -17,15 +17,19 @@ import time
 from django.conf import settings
 from django.contrib import auth
 from django.core.exceptions import SuspiciousOperation
+from django.db import IntegrityError
 from django.http import HttpResponseRedirect, QueryDict
 from django.urls import reverse
 from django.utils.crypto import get_random_string
 from django.utils.http import urlencode
+from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
 
 from authentication.utils import build_absolute_uri_for_oidc
+from authentication.views.mixins import FlashMessageMixin
 from common.utils import safe_next_url
 from .utils import get_logger
+from ...views.utils import redirect_to_guard_view
 
 logger = get_logger(__file__)
 
@@ -113,7 +117,7 @@ class OIDCAuthRequestView(View):
         return HttpResponseRedirect(redirect_url)
 
 
-class OIDCAuthCallbackView(View):
+class OIDCAuthCallbackView(View, FlashMessageMixin):
     """ Allows to complete the authentication process.
 
     This view acts as the main endpoint to complete the authentication process involving the OIDC
@@ -165,7 +169,13 @@ class OIDCAuthCallbackView(View):
             next_url = request.session.get('oidc_auth_next_url', None)
             code_verifier = request.session.get('oidc_auth_code_verifier', None)
             logger.debug(log_prompt.format('Process authenticate'))
-            user = auth.authenticate(nonce=nonce, request=request, code_verifier=code_verifier)
+            try:
+                user = auth.authenticate(nonce=nonce, request=request, code_verifier=code_verifier)
+            except IntegrityError:
+                title = _("OpenID Error")
+                msg = _('Please check if a user with the same username or email already exists')
+                response = self.get_failed_response('/', title, msg)
+                return response
             if user:
                 logger.debug(log_prompt.format('Login: {}'.format(user)))
                 auth.login(self.request, user)
@@ -197,6 +207,13 @@ class OIDCAuthCallbackView(View):
 
         logger.debug(log_prompt.format('Redirect'))
         return HttpResponseRedirect(settings.AUTH_OPENID_AUTHENTICATION_FAILURE_REDIRECT_URI)
+
+
+class OIDCAuthCallbackClientView(View):
+    http_method_names = ['get', ]
+
+    def get(self, request):
+        return redirect_to_guard_view(query_string='next=client')
 
 
 class OIDCEndSessionView(View):

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 #
-
 from functools import partial
 
 from django.conf import settings
@@ -27,6 +26,7 @@ from ..models import User
 
 __all__ = [
     "UserSerializer",
+    "SmsUserSerializer",
     "MiniUserSerializer",
     "InviteSerializer",
     "ServiceAccountSerializer",
@@ -140,6 +140,10 @@ class UserSerializer(
         label=_("Can public key authentication"),
         read_only=True,
     )
+    is_face_code_set = serializers.BooleanField(
+        label=_("Is face code set"),
+        read_only=True,
+    )
     password = EncryptedField(
         label=_("Password"),
         required=False,
@@ -205,6 +209,7 @@ class UserSerializer(
             "can_public_key_auth",
             "mfa_enabled",
             "need_update_password",
+            "is_face_code_set",
         ]
         # 包含不太常用的字段，可以没有
         fields_verbose = (
@@ -409,6 +414,14 @@ class UserRetrieveSerializer(UserSerializer):
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + ["login_confirm_settings"]
+
+
+class SmsUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'name', 'email', 'phone', 'source', 'is_active', 'comment'
+        ]
 
 
 class MiniUserSerializer(serializers.ModelSerializer):

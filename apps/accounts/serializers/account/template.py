@@ -1,16 +1,14 @@
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
-from accounts.const import SecretStrategy, SecretType
 from accounts.models import AccountTemplate
-from accounts.utils import SecretGenerator
 from common.serializers import SecretReadableMixin
 from common.serializers.fields import ObjectRelatedField
 from .base import BaseAccountSerializer
 
 
 class PasswordRulesSerializer(serializers.Serializer):
-    length = serializers.IntegerField(min_value=8, max_value=30, default=16, label=_('Password length'))
+    length = serializers.IntegerField(min_value=8, max_value=36, default=16, label=_('Password length'))
     lowercase = serializers.BooleanField(default=True, label=_('Lowercase'))
     uppercase = serializers.BooleanField(default=True, label=_('Uppercase'))
     digit = serializers.BooleanField(default=True, label=_('Digit'))
@@ -18,6 +16,16 @@ class PasswordRulesSerializer(serializers.Serializer):
     exclude_symbols = serializers.CharField(
         default='', allow_blank=True, max_length=16, label=_('Exclude symbol')
     )
+
+    @staticmethod
+    def get_render_help_text():
+        return _("""length is the length of the password, and the range is 8 to 30.
+lowercase indicates whether the password contains lowercase letters, 
+uppercase indicates whether it contains uppercase letters,
+digit indicates whether it contains numbers, and symbol indicates whether it contains special symbols.
+exclude_symbols is used to exclude specific symbols. You can fill in the symbol characters to be excluded (up to 16). 
+If you do not need to exclude symbols, you can leave it blank.
+default: {"length": 16, "lowercase": true, "uppercase": true, "digit": true, "symbol": true, "exclude_symbols": ""}""")
 
 
 class AccountTemplateSerializer(BaseAccountSerializer):
@@ -46,21 +54,7 @@ class AccountTemplateSerializer(BaseAccountSerializer):
                 'required': False
             },
         }
-
-    @staticmethod
-    def generate_secret(attrs):
-        secret_type = attrs.get('secret_type', SecretType.PASSWORD)
-        secret_strategy = attrs.get('secret_strategy', SecretStrategy.custom)
-        password_rules = attrs.get('password_rules')
-        if secret_strategy != SecretStrategy.random:
-            return
-        generator = SecretGenerator(secret_strategy, secret_type, password_rules)
-        attrs['secret'] = generator.get_secret()
-
-    def validate(self, attrs):
-        attrs = super().validate(attrs)
-        self.generate_secret(attrs)
-        return attrs
+        fields_unimport_template = ['push_params']
 
 
 class AccountTemplateSecretSerializer(SecretReadableMixin, AccountTemplateSerializer):

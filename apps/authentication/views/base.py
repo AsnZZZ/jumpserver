@@ -15,7 +15,7 @@ from common.utils import get_logger
 from common.utils.common import get_request_ip
 from common.utils.django import reverse, get_object_or_none
 from users.models import User
-from users.signal_handlers import check_only_allow_exist_user_auth
+from users.signal_handlers import check_only_allow_exist_user_auth, bind_user_to_org_role
 from .mixins import FlashMessageMixin
 
 logger = get_logger(__file__)
@@ -46,9 +46,6 @@ class BaseLoginCallbackView(AuthMixin, FlashMessageMixin, IMClientMixin, View):
     def verify_state(self):
         raise NotImplementedError
 
-    def get_verify_state_failed_response(self, redirect_uri):
-        raise NotImplementedError
-
     def create_user_if_not_exist(self, user_id, **kwargs):
         user = None
         user_attr = self.client.get_user_detail(user_id, **kwargs)
@@ -64,6 +61,7 @@ class BaseLoginCallbackView(AuthMixin, FlashMessageMixin, IMClientMixin, View):
             setattr(user, f'{self.user_type}_id', user_id)
             if create:
                 setattr(user, 'source', self.user_type)
+                bind_user_to_org_role(user)
             user.save()
         except IntegrityError as err:
             logger.error(f'{self.msg_client_err}: create user error: {err}')
@@ -112,6 +110,9 @@ class BaseLoginCallbackView(AuthMixin, FlashMessageMixin, IMClientMixin, View):
             msg = e.msg
             response = self.get_failed_response(login_url, title=msg, msg=msg)
             return response
+
+        if redirect_url and 'next=client' in redirect_url:
+            self.request.META['QUERY_STRING'] += '&next=client'
         return self.redirect_to_guard_view()
 
 
@@ -120,9 +121,6 @@ class BaseBindCallbackView(FlashMessageMixin, IMClientMixin, View):
     auth_type_label = ''
 
     def verify_state(self):
-        raise NotImplementedError
-
-    def get_verify_state_failed_response(self, redirect_uri):
         raise NotImplementedError
 
     def get_already_bound_response(self, redirect_uri):
